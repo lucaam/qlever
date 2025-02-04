@@ -35,3 +35,5 @@ inline ad_utility::Synchronized<std::string_view>
 // variables that don't require linking. For details see above.
 void copyVersionInfo();
 }  // namespace qlever::version
+
+// test
