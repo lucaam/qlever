@@ -13,20 +13,24 @@ concurrency:
 
 jobs:
   build:
+  
     # The CMake configure and build commands are platform-agnostic and should work equally
     # well on Windows or Mac.  You can convert this to a matrix build if you need
     # cross-platform coverage.
     # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+    continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
         compiler: [gcc, clang]
-        compiler-version: [11, 12, 13, 16, 17, 18]
+        compiler-version: [11, 12, 13, 15, 16, 17, 18]
         warnings: [  "-Wall -Wextra -Werror " ]
         build-type: [Release]
         expensive-tests: [true]
         additional-cmake-options: [""]
         exclude:
+          - compiler: gcc
+            compiler-version: 15
           - compiler: gcc
             compiler-version: 16
           - compiler: gcc
@@ -44,22 +48,32 @@ jobs:
             compiler-version: 11
             additional-cmake-options: "-DUSE_CPP_17_BACKPORTS=ON"
             build-type: Release
+            experimental: false
+          - compiler: clang
+            compiler-version: 15
+            additional-cmake-options: "-DUSE_CPP_17_BACKPORTS=ON"
+            build-type: Debug
+            expensive-tests: false
+            experimental: true
           - compiler: clang
             compiler-version: 16
             asan-flags: "-fsanitize=address -fno-omit-frame-pointer"
             build-type: RelWithDebInfo
             expensive-tests: false
+            experimental: false
           - compiler: clang
             compiler-version: 16
             ubsan-flags: " -fsanitize=undefined"
             build-type: RelWithDebInfo
             expensive-tests: false
+            experimental: false
           - compiler: clang
             compiler-version: 17
             build-type: Debug
             expensive-tests: false
             ubsan-flags: " -fsanitize=thread -O1 -g"
             additional-cmake-options: "-D_NO_TIMING_TESTS=ON"
+            experimental: false
 
     runs-on: ubuntu-22.04
 
