@@ -1,8 +1,11 @@
 //  Copyright 2022, University of Freiburg,
 //                  Chair of Algorithms and Data Structures.
 //  Author: Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
-#pragma once
+#ifndef QLEVER_SRC_UTIL_CONSTEXPRUTILS_H
+#define QLEVER_SRC_UTIL_CONSTEXPRUTILS_H
 
 #include <concepts>
 #include <ranges>
@@ -10,6 +13,7 @@
 #include "backports/algorithm.h"
 #include "util/Exception.h"
 #include "util/Forward.h"
+#include "util/TypeIdentity.h"
 #include "util/TypeTraits.h"
 
 // Various helper functions for compile-time programming.
@@ -21,7 +25,8 @@ namespace ad_utility {
 // library should be chosen.
 // TODO<joka921> why can't this be consteval when the result is bound to a
 // `constexpr` variable?
-constexpr auto pow(auto base, int exponent) {
+template <typename T>
+constexpr auto pow(T base, int exponent) {
   if (exponent < 0) {
     throw std::runtime_error{"negative exponent"};
   }
@@ -50,25 +55,41 @@ void ConstexprForLoop(const std::index_sequence<ForLoopIndexes...>&,
   ((loopBody.template operator()<ForLoopIndexes>()), ...);
 }
 
+template <typename Func, typename CaseConstant, typename... ArgTypes>
+CPP_requires(
+    is_invocable_with_case_,
+    requires(Func&& f, ArgTypes&&... args)(
+        AD_FWD(f).template operator()<CaseConstant::value>(AD_FWD(args)...)));
+
+// Concept that checks if a function can be called with the given arguments
+template <typename Func, auto Case, typename... ArgTypes>
+CPP_concept InvocableWithCase =
+    CPP_requires_ref(is_invocable_with_case_, Func,
+                     std::integral_constant<decltype(Case), Case>, ArgTypes...);
+
 // A `constexpr` switch statement. Chooses the `MatchingCase` in `FirstCase,
 // Cases...` that is equal to `value` and then calls
 // `function.operator()<MatchingCase>(args...)`.
-template <auto FirstCase, std::same_as<decltype(FirstCase)> auto... Cases>
-auto ConstexprSwitch =
-    [](auto&& function,
-       const std::equality_comparable_with<decltype(FirstCase)> auto& value,
-       auto&&... args) -> decltype(auto) requires(requires {
-  AD_FWD(function).template operator()<FirstCase>(AD_FWD(args)...);
-} && (... &&
-      requires {
-        AD_FWD(function).template operator()<Cases>(AD_FWD(args)...);
-      })) {
-  if (value == FirstCase) {
-    return AD_FWD(function).template operator()<FirstCase>(AD_FWD(args)...);
-  } else if constexpr (sizeof...(Cases) > 0) {
-    return ConstexprSwitch<Cases...>(AD_FWD(function), value, AD_FWD(args)...);
-  } else {
-    AD_FAIL();
+template <auto FirstCase, auto... Cases>
+struct ConstexprSwitch {
+  CPP_template(typename FuncType, typename ValueType, typename... Args)(
+      requires((sizeof...(Cases) == 0) ||
+               ad_utility::SameAsAny<decltype(FirstCase), decltype(Cases)...>)
+          CPP_and std::equality_comparable_with<decltype(FirstCase),
+                                                decltype(FirstCase)>
+              CPP_and InvocableWithCase<FuncType, FirstCase, Args...>
+                  CPP_and(InvocableWithCase<FuncType, Cases,
+                                            Args...>&&...)) constexpr auto
+  operator()(FuncType&& function, const ValueType& value, Args&&... args) const
+      -> decltype(auto) {
+    if (value == FirstCase) {
+      return AD_FWD(function).template operator()<FirstCase>(AD_FWD(args)...);
+    } else if constexpr (sizeof...(Cases) > 0) {
+      return ConstexprSwitch<Cases...>{}(AD_FWD(function), value,
+                                         AD_FWD(args)...);
+    } else {
+      AD_FAIL();
+    }
   }
 };
 
@@ -111,9 +132,12 @@ the check. Otherwise, returns `sizeof...(Args)`.
 */
 template <auto checkFunction, typename... Args>
 constexpr size_t getIndexOfFirstTypeToPassCheck() {
+  using ad_utility::use_type_identity::ti;
+
   size_t index = 0;
 
-  auto l = [&index]<typename T>() {
+  auto l = [&index](auto t) {
+    using T = typename decltype(t)::type;
     if constexpr (checkFunction.template operator()<T>()) {
       return true;
     } else {
@@ -122,7 +146,7 @@ constexpr size_t getIndexOfFirstTypeToPassCheck() {
     }
   };
 
-  ((l.template operator()<Args>()) || ...);
+  ((l(ti<Args>)) || ...);
 
   return index;
 }
@@ -166,9 +190,9 @@ auto toIntegerSequence() {
 // NumIntegers - 1 to an array of `NumIntegers` many integers that are each in
 // the range
 // `[0, ..., (maxValue)]`
-template <std::integral Int, size_t NumIntegers>
-constexpr std::array<Int, NumIntegers> integerToArray(Int value,
-                                                      Int numValues) {
+CPP_template(typename Int,
+             size_t NumIntegers)(requires std::integral<Int>) constexpr std::
+    array<Int, NumIntegers> integerToArray(Int value, Int numValues) {
   std::array<Int, NumIntegers> res;
   for (auto& el : res | ql::views::reverse) {
     el = value % numValues;
@@ -181,8 +205,9 @@ constexpr std::array<Int, NumIntegers> integerToArray(Int value,
 // the type of `Upper`) that contains each
 // value from `[0, ..., Upper - 1] ^ Num` exactly once. `^` denotes the
 // cartesian power.
-template <std::integral auto Upper, size_t Num>
-constexpr auto cartesianPowerAsArray() {
+CPP_template(auto Upper, size_t Num)(
+    requires std::integral<
+        decltype(Upper)>) constexpr auto cartesianPowerAsArray() {
   using Int = decltype(Upper);
   constexpr auto numValues = pow(Upper, Num);
   std::array<std::array<Int, Num>, numValues> arr;
@@ -196,8 +221,9 @@ constexpr auto cartesianPowerAsArray() {
 // value from `[0, ..., Upper - 1] X Num` exactly once. `X` denotes the
 // cartesian product of sets. The elements of the `integer_sequence` are
 // of type `std::array<Int, Num>` where `Int` is the type of `Upper`.
-template <std::integral auto Upper, size_t Num>
-auto cartesianPowerAsIntegerArray() {
+CPP_template(auto Upper,
+             size_t Num)(requires std::integral<
+                         decltype(Upper)>) auto cartesianPowerAsIntegerArray() {
   return toIntegerSequence<cartesianPowerAsArray<Upper, Num>()>();
 }
 
@@ -205,9 +231,16 @@ auto cartesianPowerAsIntegerArray() {
 @brief Call the given lambda function with each of the given types `Ts` as
 explicit template parameter, keeping the same order.
 */
-template <typename... Ts>
-constexpr void forEachTypeInParameterPack(const auto& lambda) {
+template <typename... Ts, typename F>
+constexpr void forEachTypeInParameterPack(const F& lambda) {
   (lambda.template operator()<Ts>(), ...);
+}
+
+// Same as the function above, but the types are passed to the lambda as a first
+// argument `std::type_identity<T>{}`.
+template <typename... Ts>
+constexpr void forEachTypeInParameterPackWithTI(const auto& lambda) {
+  (lambda(use_type_identity::ti<Ts>), ...);
 }
 
 /*
@@ -222,8 +255,19 @@ struct forEachTypeInTemplateTypeImpl;
 
 template <template <typename...> typename Template, typename... Ts>
 struct forEachTypeInTemplateTypeImpl<Template<Ts...>> {
-  constexpr void operator()(const auto& lambda) const {
+  template <typename F>
+  constexpr void operator()(const F& lambda) const {
     forEachTypeInParameterPack<Ts...>(lambda);
+  }
+};
+
+template <class T>
+struct forEachTypeInTemplateTypeWithTIImpl;
+
+template <template <typename...> typename Template, typename... Ts>
+struct forEachTypeInTemplateTypeWithTIImpl<Template<Ts...>> {
+  constexpr void operator()(const auto& lambda) const {
+    forEachTypeInParameterPackWithTI<Ts...>(lambda);
   }
 };
 }  // namespace detail
@@ -232,9 +276,19 @@ struct forEachTypeInTemplateTypeImpl<Template<Ts...>> {
 @brief Call the given lambda function with each type in the given instantiated
 template type as explicit template parameter, keeping the same order.
 */
-template <typename TemplateType>
-constexpr void forEachTypeInTemplateType(const auto& lambda) {
+template <typename TemplateType, typename F>
+constexpr void forEachTypeInTemplateType(const F& lambda) {
   detail::forEachTypeInTemplateTypeImpl<TemplateType>{}(lambda);
 }
 
+// Same as the function above, but the template type is passed in as a
+// `std::type_identity<TemplateType>`.
+template <typename TemplateType>
+constexpr void forEachTypeInTemplateTypeWithTI(
+    use_type_identity::TI<TemplateType>, const auto& lambda) {
+  detail::forEachTypeInTemplateTypeWithTIImpl<TemplateType>{}(lambda);
+}
+
 }  // namespace ad_utility
+
+#endif  // QLEVER_SRC_UTIL_CONSTEXPRUTILS_H

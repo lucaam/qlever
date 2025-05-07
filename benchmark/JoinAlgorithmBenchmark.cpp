@@ -3,6 +3,9 @@
 // Author: Andre Schlegel (January of 2023, schlegea@informatik.uni-freiburg.de)
 // Author of the file this file is based on: Björn Buchhold
 // (buchhold@informatik.uni-freiburg.de)
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
+
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -71,8 +74,8 @@ static constexpr bool isValuePreservingCast(const Source& source) {
 /*
 @brief Return biggest possible value for the given arithmetic type.
 */
-template <ad_utility::Arithmetic Type>
-consteval Type getMaxValue() {
+CPP_template(typename Type)(
+    requires ad_utility::Arithmetic<Type>) consteval Type getMaxValue() {
   return std::numeric_limits<Type>::max();
 }
 
@@ -114,7 +117,7 @@ struct SetOfIdTableColumnElements {
   Set the member variables for the given column.
   */
   explicit SetOfIdTableColumnElements(
-      const std::span<const ValueId>& idTableColumnRef) {
+      const ql::span<const ValueId>& idTableColumnRef) {
     ql::ranges::for_each(idTableColumnRef, [this](const ValueId& id) {
       if (auto numOccurrencesIterator = numOccurrences_.find(id);
           numOccurrencesIterator != numOccurrences_.end()) {
@@ -389,6 +392,23 @@ template <typename... Ts>
 concept exactlyOneGrowthFunction =
     ((growthFunction<Ts, size_t> || growthFunction<Ts, float>)+...) == 1;
 
+// Is something a growth function?
+struct IsGrowthFunction {
+  template <typename T>
+  constexpr bool operator()() const {
+    /*
+    We have to cheat a bit, because being a function is not something that
+    can easily be checked for to my knowledge. Instead, we simply check if
+    it's one of the limited variations of growth function that we allow.
+    */
+    if constexpr (growthFunction<T, size_t> || growthFunction<T, float>) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+};
+
 /*
 @brief Calculates the smallest whole exponent $n$, so that $base^n$ is equal, or
 bigger, than the `startingPoint`.
@@ -408,10 +428,10 @@ static double calculateNextWholeExponent(const T& base,
 @brief Generate a sorted, inclusive interval of exponents $base^x$, with $x$
 always a natural number.
 */
-template <ad_utility::Arithmetic T>
-requires std::convertible_to<T, double>
-static std::vector<T> generateExponentInterval(T base, T inclusiveLowerBound,
-                                               T inclusiveUpperBound) {
+CPP_template(typename T)(requires ad_utility::Arithmetic<T> CPP_and
+                             std::convertible_to<T, double>) static std::
+    vector<T> generateExponentInterval(T base, T inclusiveLowerBound,
+                                       T inclusiveUpperBound) {
   std::vector<T> elements{};
 
   /*
@@ -440,9 +460,9 @@ static std::vector<T> generateExponentInterval(T base, T inclusiveLowerBound,
 @brief Generate a sorted,inclusive interval of all natural numbers inside
 `[inclusiveLowerBound, inclusiveUpperBound]`.
 */
-template <ad_utility::Arithmetic T>
-static std::vector<T> generateNaturalNumberSequenceInterval(
-    T inclusiveLowerBound, T inclusiveUpperBound) {
+CPP_template(typename T)(requires ad_utility::Arithmetic<T>) static std::vector<
+    T> generateNaturalNumberSequenceInterval(T inclusiveLowerBound,
+                                             T inclusiveUpperBound) {
   if constexpr (std::floating_point<T>) {
     inclusiveLowerBound = std::ceil(inclusiveLowerBound);
     inclusiveUpperBound = std::floor(inclusiveUpperBound);
@@ -459,9 +479,8 @@ static std::vector<T> generateNaturalNumberSequenceInterval(
 
 // Merge multiple sorted vectors into one sorted vector, where every element is
 // unique.
-template <ad_utility::Arithmetic T>
-static std::vector<T> mergeSortedVectors(
-    const std::vector<std::vector<T>>& intervals) {
+CPP_template(typename T)(requires ad_utility::Arithmetic<T>) static std::vector<
+    T> mergeSortedVectors(const std::vector<std::vector<T>>& intervals) {
   std::vector<T> mergedVector{};
 
   // Merge.
@@ -762,35 +781,38 @@ class GeneralInterfaceImplementation : public BenchmarkInterface {
     @param canBeEqual If true, the generated lambda also returns true, if the
     values are equal.
     */
-    auto generateBiggerEqualLambda = []<typename T>(const T& minimumValue,
-                                                    bool canBeEqual) {
+    auto generateBiggerEqualLambda = [](const auto& minimumValue,
+                                        bool canBeEqual) {
+      using T = std::decay_t<decltype(minimumValue)>;
       return [minimumValue, canBeEqual](const T& valueToCheck) {
         return valueToCheck > minimumValue ||
                (canBeEqual && valueToCheck == minimumValue);
       };
     };
     auto generateBiggerEqualLambdaDesc =
-        [](const ad_utility::isInstantiation<
-               ad_utility::ConstConfigOptionProxy> auto& option,
-           const auto& minimumValue, bool canBeEqual) {
-          return absl::StrCat("'", option.getConfigOption().getIdentifier(),
-                              "' must be bigger than",
-                              canBeEqual ? ", or equal to," : "", " ",
-                              minimumValue, ".");
-        };
+        []<typename OptionType,
+           typename = std::enable_if_t<ad_utility::isInstantiation<
+               OptionType, ad_utility::ConstConfigOptionProxy>>>(
+            const OptionType& option, const auto& minimumValue,
+            bool canBeEqual) {
+      return absl::StrCat("'", option.getConfigOption().getIdentifier(),
+                          "' must be bigger than",
+                          canBeEqual ? ", or equal to," : "", " ", minimumValue,
+                          ".");
+    };
 
     // Object with a `operator()` for the `<=` operator.
     auto lessEqualLambda = std::less_equal<size_t>{};
     auto generateLessEqualLambdaDesc =
-        [](const ad_utility::isInstantiation<
-               ad_utility::ConstConfigOptionProxy> auto& lhs,
-           const ad_utility::isInstantiation<
-               ad_utility::ConstConfigOptionProxy> auto& rhs) {
-          return absl::StrCat("'", lhs.getConfigOption().getIdentifier(),
-                              "' must be smaller than, or equal to, "
-                              "'",
-                              rhs.getConfigOption().getIdentifier(), "'.");
-        };
+        []<typename OptionType,
+           typename = std::enable_if_t<ad_utility::isInstantiation<
+               OptionType, ad_utility::ConstConfigOptionProxy>>>(
+            const OptionType& lhs, const OptionType& rhs) {
+      return absl::StrCat("'", lhs.getConfigOption().getIdentifier(),
+                          "' must be smaller than, or equal to, "
+                          "'",
+                          rhs.getConfigOption().getIdentifier(), "'.");
+    };
 
     // Adding the validators.
 
@@ -1163,9 +1185,9 @@ class GeneralInterfaceImplementation : public BenchmarkInterface {
   chance to be picked.) This adjusts the number of elements in the sample size
   to `Amount of rows * ratio`, which affects the possibility of duplicates.
    */
-  template <ad_utility::InvocableWithExactReturnType<
-                bool, float, size_t, size_t, size_t, size_t, float, float>
-                StopFunction,
+  template <QL_CONCEPT_OR_TYPENAME(ad_utility::InvocableWithExactReturnType<
+                                   bool, float, size_t, size_t, size_t, size_t,
+                                   float, float>) StopFunction,
             isTypeOrGrowthFunction<float> T1, isTypeOrGrowthFunction<float> T2,
             isTypeOrGrowthFunction<size_t> T3,
             isTypeOrGrowthFunction<size_t> T4,
@@ -1183,32 +1205,19 @@ class GeneralInterfaceImplementation : public BenchmarkInterface {
       const T5& biggerTableNumColumns,
       const T6& smallerTableJoinColumnSampleSizeRatio,
       const T7& biggerTableJoinColumnSampleSizeRatio) const {
-    // Is something a growth function?
-    constexpr auto isGrowthFunction = []<typename T>() {
-      /*
-      We have to cheat a bit, because being a function is not something, that
-      can easily be checked for to my knowledge. Instead, we simply check, if
-      it's one of the limited variation of growth function, that we allow.
-      */
-      if constexpr (growthFunction<T, size_t> || growthFunction<T, float>) {
-        return true;
-      } else {
-        return false;
-      }
-    };
-
+    constexpr IsGrowthFunction isGrowthFunction;
     // Returns the first argument, that is a growth function.
     auto returnFirstGrowthFunction =
-        [&isGrowthFunction]<typename... Ts>(Ts&... args) -> auto& {
+        [&isGrowthFunction](auto&... args) -> auto& {
       // Put them into a tuple, so that we can easily look them up.
-      auto tup = std::tuple<Ts&...>{AD_FWD(args)...};
+      auto tup = std::tuple<decltype(args)...>{AD_FWD(args)...};
 
       // Get the index of the first growth function.
-      constexpr static size_t idx =
-          ad_utility::getIndexOfFirstTypeToPassCheck<isGrowthFunction, Ts...>();
+      constexpr static size_t idx = ad_utility::getIndexOfFirstTypeToPassCheck<
+          isGrowthFunction, std::decay_t<decltype(args)>...>();
 
       // Do we have a valid index?
-      static_assert(idx < sizeof...(Ts),
+      static_assert(idx < sizeof...(args),
                     "There was no growth function in this parameter pack.");
 
       return std::get<idx>(tup);
@@ -1219,9 +1228,9 @@ class GeneralInterfaceImplementation : public BenchmarkInterface {
     created, if it's a function, and return the result. Otherwise  return the
     given `possibleGrowthFunction`.
     */
-    auto returnOrCall = [&isGrowthFunction]<typename T>(
-                            const T& possibleGrowthFunction,
-                            const size_t nextRowIdx) {
+    auto returnOrCall = [&isGrowthFunction](const auto& possibleGrowthFunction,
+                                            const size_t nextRowIdx) {
+      using T = std::decay_t<decltype(possibleGrowthFunction)>;
       if constexpr (isGrowthFunction.template operator()<T>()) {
         return possibleGrowthFunction(nextRowIdx);
       } else {
@@ -1330,9 +1339,9 @@ class GeneralInterfaceImplementation : public BenchmarkInterface {
       ResultTable* table,
       const QL_CONCEPT_OR_NOTHING(
           ad_utility::SameAsAny<float, size_t>) auto changingParameterValue,
-      ad_utility::InvocableWithExactReturnType<bool, float, size_t, size_t,
-                                               size_t, size_t, float,
-                                               float> auto stopFunction,
+      QL_CONCEPT_OR_NOTHING(ad_utility::InvocableWithExactReturnType<
+                            bool, float, size_t, size_t, size_t, size_t, float,
+                            float>) auto stopFunction,
       const float overlap, const std::optional<size_t>& resultTableNumRows,
       ad_utility::RandomSeed randomSeed, const bool smallerTableSorted,
       const bool biggerTableSorted, const float& ratioRows,

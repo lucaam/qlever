@@ -1,6 +1,8 @@
 // Copyright 2023, University of Freiburg,
 // Chair of Algorithms and Data Structures
 // Authors: Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/sparqlExpressions/NaryExpressionImpl.h"
@@ -11,11 +13,12 @@
 namespace sparqlExpression {
 namespace detail::conditional_expressions {
 using namespace sparqlExpression::detail;
-[[maybe_unused]] auto ifImpl =
-    []<SingleExpressionResult T, SingleExpressionResult U>(
-        EffectiveBooleanValueGetter::Result condition, T&& i,
-        U&& e) -> IdOrLiteralOrIri requires std::is_rvalue_reference_v<T&&> &&
-                                            std::is_rvalue_reference_v<U&&> {
+[[maybe_unused]] auto ifImpl = [](EffectiveBooleanValueGetter::Result condition,
+                                  auto&& i, auto&& e)
+    -> CPP_ret(IdOrLiteralOrIri)(
+        requires SingleExpressionResult<decltype(i)>&& SingleExpressionResult<
+            decltype(e)>&& std::is_rvalue_reference_v<decltype(i)&&>&&
+            std::is_rvalue_reference_v<decltype(e)&&>) {
   if (condition == EffectiveBooleanValueGetter::Result::True) {
     return AD_FWD(i);
   } else {
@@ -65,9 +68,9 @@ class CoalesceExpression : public VariadicExpression {
     };
 
     auto visitConstantExpressionResult =
-        [&nextUnboundIndices, &unboundIndices, &isUnbound, &result,
-         ctx ]<SingleExpressionResult T>(T && childResult)
-            requires isConstantResult<T> {
+        CPP_template_lambda(&nextUnboundIndices, &unboundIndices, &isUnbound,
+                            &result, ctx)(typename T)(T && childResult)(
+            requires SingleExpressionResult<T> && isConstantResult<T>) {
       IdOrLiteralOrIri constantResult{AD_FWD(childResult)};
       if (isUnbound(constantResult)) {
         nextUnboundIndices = std::move(unboundIndices);
@@ -92,10 +95,10 @@ class CoalesceExpression : public VariadicExpression {
     // result so far is unbound, and the child result is bound. While doing so,
     // set up the `nextUnboundIndices` vector  for the next step.
     auto visitVectorExpressionResult =
-        [&result, &unboundIndices, &nextUnboundIndices, &ctx, &
-         isUnbound ]<SingleExpressionResult T>(T && childResult)
-            requires std::is_rvalue_reference_v<T&&> {
-      static_assert(!isConstantResult<T>);
+        CPP_template_lambda(&result, &unboundIndices, &nextUnboundIndices, &ctx,
+                            &isUnbound)(typename T)(T && childResult)(
+            requires CPP_NOT(isConstantResult<T> && SingleExpressionResult<T> &&
+                             std::is_rvalue_reference_v<T&&>)) {
       auto gen = detail::makeGenerator(AD_FWD(childResult), ctx->size(), ctx);
       // Iterator to the next index where the result so far is unbound.
       auto unboundIdxIt = unboundIndices.begin();
@@ -125,11 +128,10 @@ class CoalesceExpression : public VariadicExpression {
           },
           [ctx]() { ctx->cancellationHandle_->throwIfCancelled(); });
     };
-    auto visitExpressionResult =
-        [
-          &visitConstantExpressionResult, &visitVectorExpressionResult
-        ]<SingleExpressionResult T>(T && childResult)
-            requires std::is_rvalue_reference_v<T&&> {
+    auto visitExpressionResult = CPP_template_lambda(
+        &visitConstantExpressionResult,
+        &visitVectorExpressionResult)(typename T)(T && childResult)(
+        requires SingleExpressionResult<T> && std::is_rvalue_reference_v<T&&>) {
       // If the previous expression result is a constant, we can skip the
       // loop.
       if constexpr (isConstantResult<T>) {

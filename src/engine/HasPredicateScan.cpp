@@ -59,7 +59,7 @@ HasPredicateScan::HasPredicateScan(QueryExecutionContext* qec,
 // `ScanType`.
 static HasPredicateScan::ScanType getScanType(const SparqlTriple& triple) {
   using enum HasPredicateScan::ScanType;
-  AD_CONTRACT_CHECK(triple.p_._iri == HAS_PREDICATE_PREDICATE);
+  AD_CONTRACT_CHECK(triple.p_.iri_ == HAS_PREDICATE_PREDICATE);
   if (isVariable(triple.s_) && (isVariable(triple.o_))) {
     if (triple.s_ == triple.o_) {
       throw std::runtime_error{
@@ -255,8 +255,7 @@ size_t HasPredicateScan::getCostEstimate() {
 }
 
 // ___________________________________________________________________________
-ProtoResult HasPredicateScan::computeResult(
-    [[maybe_unused]] bool requestLaziness) {
+Result HasPredicateScan::computeResult([[maybe_unused]] bool requestLaziness) {
   IdTable idTable{getExecutionContext()->getAllocator()};
   idTable.setNumColumns(getResultWidth());
 
@@ -307,8 +306,9 @@ ProtoResult HasPredicateScan::computeResult(
 }
 
 // ___________________________________________________________________________
+template <typename HasPattern>
 void HasPredicateScan::computeFreeS(
-    IdTable* resultTable, Id objectId, auto& hasPattern,
+    IdTable* resultTable, Id objectId, HasPattern& hasPattern,
     const CompactVectorOfStrings<Id>& patterns) {
   IdTableStatic<1> result = std::move(*resultTable).toStatic<1>();
   // TODO<joka921> This can be a much simpler and cheaper implementation that
@@ -352,8 +352,9 @@ void HasPredicateScan::computeFreeO(
 }
 
 // ___________________________________________________________________________
+template <typename HasPattern>
 void HasPredicateScan::computeFullScan(
-    IdTable* resultTable, auto& hasPattern,
+    IdTable* resultTable, HasPattern& hasPattern,
     const CompactVectorOfStrings<Id>& patterns, size_t resultSize) {
   IdTableStatic<2> result = std::move(*resultTable).toStatic<2>();
   result.reserve(resultSize);
@@ -372,7 +373,7 @@ void HasPredicateScan::computeFullScan(
 
 // ___________________________________________________________________________
 template <int WIDTH>
-ProtoResult HasPredicateScan::computeSubqueryS(
+Result HasPredicateScan::computeSubqueryS(
     IdTable* dynResult, const CompactVectorOfStrings<Id>& patterns) {
   auto subresult = subtree().getResult();
   auto patternCol = subtreeColIdx();
@@ -393,3 +394,12 @@ const TripleComponent& HasPredicateScan::getObject() const { return object_; }
 
 // ___________________________________________________________________________
 HasPredicateScan::ScanType HasPredicateScan::getType() const { return type_; }
+
+// _____________________________________________________________________________
+std::unique_ptr<Operation> HasPredicateScan::cloneImpl() const {
+  auto copy = std::make_unique<HasPredicateScan>(*this);
+  if (subtree_.has_value()) {
+    copy->subtree_.value().subtree_ = subtree().clone();
+  }
+  return copy;
+}

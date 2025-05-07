@@ -1,6 +1,8 @@
 //  Copyright 2019, University of Freiburg,
 //                  Chair of Algorithms and Data Structures.
 //  Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #ifndef QLEVER_STRINGSORTCOMPARATOR_H
 #define QLEVER_STRINGSORTCOMPARATOR_H
@@ -17,6 +19,7 @@
 #include <memory>
 #include <memory_resource>
 
+#include "backports/algorithm.h"
 #include "global/Constants.h"
 #include "util/Exception.h"
 #include "util/StringUtils.h"
@@ -51,8 +54,8 @@ class LocaleManager {
   using U8String = std::basic_string<uint8_t>;
   using U8StringView = std::basic_string_view<uint8_t>;
 
-  template <ad_utility::SimilarToAny<U8String, U8StringView> T>
-  class SortKeyImpl {
+  CPP_template(typename T)(requires ad_utility::SimilarToAny<
+                           T, U8String, U8StringView>) class SortKeyImpl {
    public:
     SortKeyImpl() = default;
     explicit SortKeyImpl(U8StringView sortKey) : sortKey_(sortKey) {}
@@ -177,9 +180,12 @@ class LocaleManager {
    * @return A weight string s.t. compare(s, t, level) ==
    * std::strcmp(getSortKey(s, level), getSortKey(t, level)
    */
-  void getSortKey(
-      std::string_view s, const Level level,
-      std::invocable<const uint8_t*, size_t> auto resultFunction) const {
+  // clang-format off
+  CPP_template(typename F)(
+    requires ranges::invocable<F, const uint8_t*, size_t>)
+      // clang-format on
+      void getSortKey(std::string_view s, const Level level,
+                      F resultFunction) const {
     // TODO<joka921> This function is one of the bottlenecks of the first pass
     // of the IndexBuilder One possible improvement is to reuse the memory
     // allocations for the `sortKeyBuffer`.
@@ -619,6 +625,13 @@ class TripleComponentComparator {
     return compare(spA, spB, level) < 0;
   }
 
+  // Same operator, but with switched argument types.
+  bool operator()(const SplitVal& spA, std::string_view b,
+                  const Level level) const {
+    auto spB = extractAndTransformComparable(b, level, false);
+    return compare(spA, spB, level) < 0;
+  }
+
   template <typename A, typename B, typename C>
   bool operator()(const SplitValBase<A, B, C>& a,
                   const SplitValBase<A, B, C>& b, const Level level) const {
@@ -791,9 +804,10 @@ class TripleComponentComparator {
       // For the non-owning sort key we allocate all the strings using the
       // `allocator`
       AD_CONTRACT_CHECK(allocator != nullptr);
-      auto add =
-          [allocator]<typename Char>(
-              std::basic_string_view<Char> s) -> std::basic_string_view<Char> {
+      auto add = [allocator](auto s) -> decltype(s) {
+        static_assert(
+            ad_utility::isInstantiation<decltype(s), std::basic_string_view>);
+        using Char = typename decltype(s)::value_type;
         auto alloc =
             std::pmr::polymorphic_allocator<Char>(allocator->resource());
         auto ptr = alloc.allocate(s.size());

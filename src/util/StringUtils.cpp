@@ -6,9 +6,11 @@
 #include "util/StringUtils.h"
 
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_replace.h>
 #include <unicode/bytestream.h>
 #include <unicode/casemap.h>
 
+#include "global/Constants.h"
 #include "util/Algorithm.h"
 #include "util/Exception.h"
 #include "util/Forward.h"
@@ -92,7 +94,8 @@ std::pair<size_t, std::string_view> getUTF8Prefix(std::string_view sv,
 namespace detail {
 // The common implementation of `utf8ToLower` and `utf8ToUpper` (for
 // details see below).
-std::string utf8StringTransform(std::string_view s, auto transformation) {
+template <typename F>
+std::string utf8StringTransform(std::string_view s, F transformation) {
   std::string result;
   icu::StringByteSink<std::string> sink(&result);
   UErrorCode err = U_ZERO_ERROR;
@@ -197,5 +200,16 @@ std::string addIndentation(std::string_view str,
       indentationSymbol,
       absl::StrReplaceAll(str,
                           {{"\n", absl::StrCat("\n", indentationSymbol)}}));
+}
+
+// ___________________________________________________________________________
+std::string truncateOperationString(std::string_view operation) {
+  static_assert(MAX_LENGTH_OPERATION_ECHO >= 3);
+  if (operation.length() <= MAX_LENGTH_OPERATION_ECHO) {
+    return std::string{operation};
+  } else {
+    return absl::StrCat(operation.substr(0, MAX_LENGTH_OPERATION_ECHO - 3),
+                        "...");
+  }
 }
 }  // namespace ad_utility

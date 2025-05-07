@@ -1,14 +1,16 @@
-// Copyright 2018, University of Freiburg,
-// Chair of Algorithms and Data Structures.
-// Author:
-//   2018      Florian Kramer (florian.kramer@mail.uni-freiburg.de)
-//   2020-     Johannes Kalmbach (kalmbach@informatik.uni-freiburg.de)
+// Copyright 2018 - 2025, University of Freiburg
+// Chair of Algorithms and Data Structures
+// Authors: Florian Kramer [2018 - 2020]
+//          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "engine/GroupBy.h"
 
 #include <absl/strings/str_join.h>
 
 #include "engine/CallFixedSize.h"
+#include "engine/ExistsJoin.h"
 #include "engine/IndexScan.h"
 #include "engine/Join.h"
 #include "engine/LazyGroupBy.h"
@@ -52,6 +54,14 @@ GroupBy::GroupBy(QueryExecutionContext* qec, vector<Variable> groupByVariables,
   ql::ranges::sort(_groupByVariables, std::less<>{}, &Variable::name);
 
   auto sortColumns = computeSortColumns(subtree.get());
+
+  // Aliases are like `BIND`s, which may contain `EXISTS` expressions.
+  for (const auto& alias : _aliases) {
+    subtree = ExistsJoin::addExistsJoinsToSubtree(
+        alias._expression, std::move(subtree), getExecutionContext(),
+        cancellationHandle_);
+  }
+
   _subtree =
       QueryExecutionTree::createSortedTree(std::move(subtree), sortColumns);
 }
@@ -208,8 +218,8 @@ void GroupBy::processGroup(
   evaluationContext._previousResultsFromSameGroup.at(resultColumn) =
       sparqlExpression::copyExpressionResult(expressionResult);
 
-  auto visitor = [&]<sparqlExpression::SingleExpressionResult T>(
-                     T&& singleResult) mutable {
+  auto visitor = CPP_template_lambda_mut(&)(typename T)(T && singleResult)(
+      requires sparqlExpression::SingleExpressionResult<T>) {
     constexpr static bool isStrongId = std::is_same_v<T, Id>;
     AD_CONTRACT_CHECK(sparqlExpression::isConstantResult<T>);
     if constexpr (isStrongId) {
@@ -275,7 +285,7 @@ IdTable GroupBy::doGroupBy(const IdTable& inTable,
 
 // _____________________________________________________________________________
 sparqlExpression::EvaluationContext GroupBy::createEvaluationContext(
-    const LocalVocab& localVocab, const IdTable& idTable) const {
+    LocalVocab& localVocab, const IdTable& idTable) const {
   sparqlExpression::EvaluationContext evaluationContext{
       *getExecutionContext(),
       _subtree->getVariableColumns(),
@@ -301,7 +311,7 @@ sparqlExpression::EvaluationContext GroupBy::createEvaluationContext(
 }
 
 // _____________________________________________________________________________
-ProtoResult GroupBy::computeResult(bool requestLaziness) {
+Result GroupBy::computeResult(bool requestLaziness) {
   LOG(DEBUG) << "GroupBy result computation..." << std::endl;
 
   if (auto idTable = computeOptimizedGroupByIfPossible()) {
@@ -403,9 +413,9 @@ ProtoResult GroupBy::computeResult(bool requestLaziness) {
         std::move(groupByCols), !requestLaziness);
 
     return requestLaziness
-               ? ProtoResult{std::move(generator), resultSortedOn()}
-               : ProtoResult{cppcoro::getSingleElement(std::move(generator)),
-                             resultSortedOn()};
+               ? Result{std::move(generator), resultSortedOn()}
+               : Result{cppcoro::getSingleElement(std::move(generator)),
+                        resultSortedOn()};
   }
 
   AD_CORRECTNESS_CHECK(subresult->idTable().numColumns() == inWidth);
@@ -424,10 +434,11 @@ ProtoResult GroupBy::computeResult(bool requestLaziness) {
 }
 
 // _____________________________________________________________________________
-template <int COLS>
-size_t GroupBy::searchBlockBoundaries(
-    const std::invocable<size_t, size_t> auto& onBlockChange,
-    const IdTableView<COLS>& idTable, GroupBlock& currentGroupBlock) const {
+CPP_template_def(int COLS,
+                 typename T)(requires ranges::invocable<T, size_t, size_t>)
+    size_t GroupBy::searchBlockBoundaries(const T& onBlockChange,
+                                          const IdTableView<COLS>& idTable,
+                                          GroupBlock& currentGroupBlock) const {
   size_t blockStart = 0;
 
   for (size_t pos = 0; pos < idTable.size(); pos++) {
@@ -1097,12 +1108,11 @@ void GroupBy::extractValues(
     sparqlExpression::ExpressionResult&& expressionResult,
     sparqlExpression::EvaluationContext& evaluationContext,
     IdTable* resultTable, LocalVocab* localVocab, size_t outCol) {
-  auto visitor = [&evaluationContext, &resultTable, &localVocab,
-                  &outCol]<sparqlExpression::SingleExpressionResult T>(
-                     T&& singleResult) mutable {
+  auto visitor = CPP_template_lambda_mut(&evaluationContext, &resultTable,
+                                         &localVocab, &outCol)(typename T)(
+      T && singleResult)(requires sparqlExpression::SingleExpressionResult<T>) {
     auto generator = sparqlExpression::detail::makeGenerator(
-        std::forward<T>(singleResult), evaluationContext.size(),
-        &evaluationContext);
+        AD_FWD(singleResult), evaluationContext.size(), &evaluationContext);
 
     auto targetIterator =
         resultTable->getColumn(outCol).begin() + evaluationContext._beginIndex;
@@ -1220,7 +1230,7 @@ GroupBy::substituteAllAggregates(
 template <size_t NUM_GROUP_COLUMNS>
 std::vector<size_t>
 GroupBy::HashMapAggregationData<NUM_GROUP_COLUMNS>::getHashEntries(
-    const ArrayOrVector<std::span<const Id>>& groupByCols) {
+    const ArrayOrVector<ql::span<const Id>>& groupByCols) {
   AD_CONTRACT_CHECK(groupByCols.size() > 0);
 
   std::vector<size_t> hashEntries;
@@ -1245,18 +1255,19 @@ GroupBy::HashMapAggregationData<NUM_GROUP_COLUMNS>::getHashEntries(
     hashEntries.push_back(iterator->second);
   }
 
-  auto resizeVectors =
-      []<VectorOfAggregationData T>(
-          T& arg, size_t numberOfGroups,
-          [[maybe_unused]] const HashMapAggregateTypeWithData& info) {
-        if constexpr (std::same_as<typename T::value_type,
-                                   GroupConcatAggregationData>) {
-          arg.resize(numberOfGroups,
-                     GroupConcatAggregationData{info.separator_.value()});
-        } else {
-          arg.resize(numberOfGroups);
-        }
-      };
+  // CPP_template_lambda(capture)(typenames...)(arg)(requires ...)`
+  auto resizeVectors = CPP_template_lambda()(typename T)(
+      T & arg, size_t numberOfGroups,
+      [[maybe_unused]] const HashMapAggregateTypeWithData& info)(
+      requires true) {
+    if constexpr (std::same_as<typename T::value_type,
+                               GroupConcatAggregationData>) {
+      arg.resize(numberOfGroups,
+                 GroupConcatAggregationData{info.separator_.value()});
+    } else {
+      arg.resize(numberOfGroups);
+    }
+  };
 
   // TODO<C++23> use views::enumerate
   auto idx = 0;
@@ -1265,8 +1276,7 @@ GroupBy::HashMapAggregationData<NUM_GROUP_COLUMNS>::getHashEntries(
     const auto numberOfGroups = getNumberOfGroups();
 
     std::visit(
-        [&resizeVectors, &aggregationTypeWithData,
-         numberOfGroups]<VectorOfAggregationData T>(T& arg) {
+        [&resizeVectors, &aggregationTypeWithData, numberOfGroups](auto& arg) {
           resizeVectors(arg, numberOfGroups, aggregationTypeWithData);
         },
         aggregation);
@@ -1480,10 +1490,10 @@ static constexpr auto makeProcessGroupsVisitor =
     [](size_t blockSize,
        const sparqlExpression::EvaluationContext* evaluationContext,
        const std::vector<size_t>& hashEntries) {
-      return [blockSize, evaluationContext,
-              &hashEntries]<sparqlExpression::SingleExpressionResult T,
-                            VectorOfAggregationData A>(
-                 T&& singleResult, A& aggregationDataVector) {
+      return CPP_template_lambda(blockSize, evaluationContext, &hashEntries)(
+          typename T, typename A)(T && singleResult, A & aggregationDataVector)(
+          requires sparqlExpression::SingleExpressionResult<T> &&
+          VectorOfAggregationData<A>) {
         auto generator = sparqlExpression::detail::makeGenerator(
             std::forward<T>(singleResult), blockSize, evaluationContext);
 
@@ -1501,10 +1511,10 @@ static constexpr auto makeProcessGroupsVisitor =
     };
 
 // _____________________________________________________________________________
-template <size_t NUM_GROUP_COLUMNS>
+template <size_t NUM_GROUP_COLUMNS, typename SubResults>
 Result GroupBy::computeGroupByForHashMapOptimization(
-    std::vector<HashMapAliasInformation>& aggregateAliases, auto subresults,
-    const std::vector<size_t>& columnIndices) const {
+    std::vector<HashMapAliasInformation>& aggregateAliases,
+    SubResults subresults, const std::vector<size_t>& columnIndices) const {
   AD_CORRECTNESS_CHECK(columnIndices.size() == NUM_GROUP_COLUMNS ||
                        NUM_GROUP_COLUMNS == 0);
   LocalVocab localVocab;
@@ -1526,8 +1536,7 @@ Result GroupBy::computeGroupByForHashMapOptimization(
     //
     // NOTE: If the input blocks have very similar or even identical non-empty
     // local vocabs, no deduplication is performed.
-    localVocab.mergeWith(std::span{&inputLocalVocab, 1});
-
+    localVocab.mergeWith(inputLocalVocab);
     // Setup the `EvaluationContext` for this input block.
     sparqlExpression::EvaluationContext evaluationContext(
         *getExecutionContext(), _subtree->getVariableColumns(), inputTable,
@@ -1551,7 +1560,7 @@ Result GroupBy::computeGroupByForHashMapOptimization(
 
       // Perform HashMap lookup once for all groups in current block
       using U = HashMapAggregationData<
-          NUM_GROUP_COLUMNS>::template ArrayOrVector<std::span<const Id>>;
+          NUM_GROUP_COLUMNS>::template ArrayOrVector<ql::span<const Id>>;
       U groupValues;
       resizeIfVector(groupValues, columnIndices.size());
 
@@ -1615,4 +1624,10 @@ GroupBy::getVariableForCountOfSingleAlias() const {
 // _____________________________________________________________________________
 bool GroupBy::isVariableBoundInSubtree(const Variable& variable) const {
   return _subtree->getVariableColumnOrNullopt(variable).has_value();
+}
+
+// _____________________________________________________________________________
+std::unique_ptr<Operation> GroupBy::cloneImpl() const {
+  return std::make_unique<GroupBy>(_executionContext, _groupByVariables,
+                                   _aliases, _subtree->clone());
 }

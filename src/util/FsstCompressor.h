@@ -65,8 +65,11 @@ class FsstDecoder {
     return output;
   }
   // Allow this type to be trivially serializable,
-  friend std::true_type allowTrivialSerialization(
-      std::same_as<FsstDecoder> auto, auto);
+  CPP_template(typename T, typename U)(
+      requires ql::concepts::same_as<T, FsstDecoder>) friend std::true_type
+      allowTrivialSerialization(T, U&&) {
+    return {};
+  }
 };
 
 // A sequence of `N` `FsstDecoder` s that are chained in inverted order (the
@@ -104,8 +107,9 @@ class FsstRepeatedDecoder {
     return result;
   }
   // Allow this type to be trivially serializable,
-  [[maybe_unused]] friend std::true_type allowTrivialSerialization(
-      std::same_as<FsstRepeatedDecoder> auto, auto) {
+  CPP_template_2(typename T,
+                 typename U)(requires std::same_as<T, FsstRepeatedDecoder>)
+      [[maybe_unused]] friend std::true_type allowTrivialSerialization(T, U) {
     return {};
   }
 };
@@ -159,15 +163,16 @@ class FsstEncoder {
   // strings again.
   using BulkResult = std::tuple<std::shared_ptr<std::string>,
                                 std::vector<std::string_view>, FsstDecoder>;
-  static BulkResult compressAll(const auto& strings) {
+  template <typename T>
+  static BulkResult compressAll(const T& strings) {
     return makeEncoder<true>(strings);
   }
 
  private:
   // The implementation of the constructor and of `compressAll`.
-  template <bool alsoCompressAll = false>
+  template <bool alsoCompressAll = false, typename Strings>
   static std::conditional_t<alsoCompressAll, BulkResult, Encoder> makeEncoder(
-      const auto& strings) {
+      const Strings& strings) {
     std::vector<size_t> lengths;
     std::vector<const unsigned char*> pointers;
     [[maybe_unused]] size_t totalSize = 0;

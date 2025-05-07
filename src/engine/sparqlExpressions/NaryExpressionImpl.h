@@ -1,22 +1,25 @@
 //  Copyright 2023, University of Freiburg,
 //                  Chair of Algorithms and Data Structures.
 //  Author: Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
-#pragma once
+#ifndef QLEVER_SRC_ENGINE_SPARQLEXPRESSIONS_NARYEXPRESSIONIMPL_H
+#define QLEVER_SRC_ENGINE_SPARQLEXPRESSIONS_NARYEXPRESSIONIMPL_H
+
+#include <absl/functional/bind_front.h>
 
 #include <ranges>
 
-#include "absl/strings/ascii.h"
-#include "absl/strings/charconv.h"
-#include "engine/sparqlExpressions/NaryExpression.h"
 #include "engine/sparqlExpressions/SparqlExpressionGenerators.h"
 #include "engine/sparqlExpressions/SparqlExpressionValueGetters.h"
 #include "util/CryptographicHashUtils.h"
 
 namespace sparqlExpression::detail {
 template <typename NaryOperation>
-requires(isOperation<NaryOperation>)
 class NaryExpression : public SparqlExpression {
+  CPP_assert(isOperation<NaryOperation>);
+
  public:
   static constexpr size_t N = NaryOperation::N;
   using Children = std::array<SparqlExpression::Ptr, N>;
@@ -30,9 +33,9 @@ class NaryExpression : public SparqlExpression {
 
   // Construct from `N` child expressions. Each of the children must have a type
   // `std::unique_ptr<SubclassOfSparqlExpression>`.
-  explicit NaryExpression(
-      std::convertible_to<SparqlExpression::Ptr> auto... children)
-      requires(sizeof...(children) == N)
+  CPP_template(typename... C)(
+      requires(concepts::convertible_to<C, SparqlExpression::Ptr>&&...)
+          CPP_and(sizeof...(C) == N)) explicit NaryExpression(C... children)
       : NaryExpression{Children{std::move(children)...}} {}
 
   // __________________________________________________________________________
@@ -43,19 +46,21 @@ class NaryExpression : public SparqlExpression {
       const VariableToColumnMap& varColMap) const override;
 
   // _________________________________________________________________________
-  std::optional<SparqlExpression*> getNthChild(size_t pos) const {
-    return pos < N ? std::make_optional(children_[pos].get()) : std::nullopt;
+  std::optional<SparqlExpression*> getChildAtIndex(size_t childIndex) const {
+    return childIndex < N ? std::make_optional(children_[childIndex].get())
+                          : std::nullopt;
   }
 
  private:
   // _________________________________________________________________________
-  std::span<SparqlExpression::Ptr> childrenImpl() override;
+  ql::span<SparqlExpression::Ptr> childrenImpl() override;
 
   // Evaluate the `naryOperation` on the `operands` using the `context`.
-  template <SingleExpressionResult... Operands>
-  static ExpressionResult evaluateOnChildrenOperands(
-      NaryOperation naryOperation, EvaluationContext* context,
-      Operands&&... operands) {
+  CPP_template(typename... Operands)(
+      requires(SingleExpressionResult<Operands>&&...)) static ExpressionResult
+      evaluateOnChildrenOperands(NaryOperation naryOperation,
+                                 EvaluationContext* context,
+                                 Operands&&... operands) {
     // Perform a more efficient calculation if a specialized function exists
     // that matches all operands.
     if (isAnySpecializedFunctionPossible(naryOperation._specializedFunctions,
@@ -101,7 +106,8 @@ struct NumericIdWrapper {
   // Note: Sonarcloud suggests `[[no_unique_address]]` for the following member,
   // but adding it causes an internal compiler error in Clang 16.
   Function function_{};
-  Id operator()(auto&&... args) const {
+  template <typename... Args>
+  Id operator()(Args&&... args) const {
     return makeNumericId<nanToUndef>(function_(AD_FWD(args)...));
   }
 };
@@ -112,9 +118,12 @@ struct NumericIdWrapper {
 // `NumericValue` variant.
 template <typename Function>
 inline auto makeNumericExpression() {
-  return [](const std::same_as<NumericValue> auto&... args) {
-    auto visitor = []<typename... Ts>(const Ts&... t) {
-      if constexpr ((... || std::is_same_v<NotNumeric, Ts>)) {
+  return [](const auto&... args) {
+    CPP_assert(
+        (concepts::same_as<std::decay_t<decltype(args)>, NumericValue> && ...));
+    auto visitor = [](const auto&... t) {
+      if constexpr ((... ||
+                     std::is_same_v<NotNumeric, std::decay_t<decltype(t)>>)) {
         return Id::makeUndefined();
       } else {
         return makeNumericId(Function{}(t...));
@@ -132,8 +141,9 @@ template <size_t N, typename X, typename... T>
 using NARY = NaryExpression<Operation<N, X, T...>>;
 
 // True iff all types `Ts` are `SetOfIntervals`.
-inline auto areAllSetOfIntervals = []<typename... Ts>(const Ts&...) constexpr {
-  return (... && ad_utility::isSimilar<Ts, ad_utility::SetOfIntervals>);
+inline auto areAllSetOfIntervals = [](const auto&... t) constexpr {
+  return (... && ad_utility::isSimilar<std::decay_t<decltype(t)>,
+                                       ad_utility::SetOfIntervals>);
 };
 template <typename F>
 using SET = SpecializedFunction<F, decltype(areAllSetOfIntervals)>;
@@ -145,14 +155,12 @@ using TernaryBool = EffectiveBooleanValueGetter::Result;
 
 // _____________________________________________________________________________
 template <typename Op>
-requires(isOperation<Op>)
 NaryExpression<Op>::NaryExpression(Children&& children)
     : children_{std::move(children)} {}
 
 // _____________________________________________________________________________
 
 template <typename NaryOperation>
-requires(isOperation<NaryOperation>)
 ExpressionResult NaryExpression<NaryOperation>::evaluate(
     EvaluationContext* context) const {
   auto resultsOfChildren = ad_utility::applyFunctionToEachElementOfTuple(
@@ -166,7 +174,7 @@ ExpressionResult NaryExpression<NaryOperation>::evaluate(
 
   // A function that only takes several `ExpressionResult`s,
   // and evaluates the expression.
-  auto evaluateOnChildrenResults = std::bind_front(
+  auto evaluateOnChildrenResults = absl::bind_front(
       ad_utility::visitWithVariantsAndParameters,
       evaluateOnChildOperandsAsLambda, NaryOperation{}, context);
 
@@ -175,14 +183,13 @@ ExpressionResult NaryExpression<NaryOperation>::evaluate(
 
 // _____________________________________________________________________________
 template <typename Op>
-requires(isOperation<Op>)
-std::span<SparqlExpression::Ptr> NaryExpression<Op>::childrenImpl() {
+ql::span<SparqlExpression::Ptr> NaryExpression<Op>::childrenImpl() {
   return {children_.data(), children_.size()};
 }
 
 // __________________________________________________________________________
 template <typename Op>
-requires(isOperation<Op>) [[nodiscard]] string NaryExpression<Op>::getCacheKey(
+[[nodiscard]] string NaryExpression<Op>::getCacheKey(
     const VariableToColumnMap& varColMap) const {
   string key = typeid(*this).name();
   key += ad_utility::lazyStrJoin(
@@ -204,3 +211,5 @@ requires(isOperation<Op>) [[nodiscard]] string NaryExpression<Op>::getCacheKey(
   };
 
 }  // namespace sparqlExpression::detail
+
+#endif  // QLEVER_SRC_ENGINE_SPARQLEXPRESSIONS_NARYEXPRESSIONIMPL_H

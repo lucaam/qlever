@@ -1,8 +1,11 @@
 // Copyright 2021, University of Freiburg,
 // Chair of Algorithms and Data Structures.
 // Author: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
-#pragma once
+#ifndef QLEVER_SRC_ENGINE_SPARQLEXPRESSIONS_AGGREGATEEXPRESSION_H
+#define QLEVER_SRC_ENGINE_SPARQLEXPRESSIONS_AGGREGATEEXPRESSION_H
 
 #include "engine/sparqlExpressions/LiteralExpression.h"
 #include "engine/sparqlExpressions/RelationalExpressionHelpers.h"
@@ -24,11 +27,11 @@ namespace detail {
 // This is needed for aggregation together with the `DISTINCT` keyword. For
 // example, `COUNT(DISTINCT ?x)` should count the number of distinct values for
 // `?x`.
-inline auto getUniqueElements = []<typename OperandGenerator>(
-                                    const EvaluationContext* context,
-                                    size_t inputSize,
-                                    OperandGenerator operandGenerator)
-    -> cppcoro::generator<ql::ranges::range_value_t<OperandGenerator>> {
+inline auto getUniqueElements = [](const EvaluationContext* context,
+                                   size_t inputSize, auto operandGenerator)
+    -> cppcoro::generator<
+        ql::ranges::range_value_t<decltype(operandGenerator)>> {
+  using OperandGenerator = decltype(operandGenerator);
   ad_utility::HashSetWithMemoryLimit<
       ql::ranges::range_value_t<OperandGenerator>>
       uniqueHashSet(inputSize, context->_allocator);
@@ -84,7 +87,7 @@ class AggregateExpression : public SparqlExpression {
 
  private:
   // _________________________________________________________________________
-  std::span<SparqlExpression::Ptr> childrenImpl() override;
+  ql::span<SparqlExpression::Ptr> childrenImpl() override;
 
  protected:
   bool _distinct;
@@ -104,9 +107,13 @@ using AGG_EXP = AggregateExpression<
 // with arguments and result of type `NumericValue` (which is a `std::variant`).
 template <typename NumericOperation>
 inline auto makeNumericExpressionForAggregate() {
-  return [](const std::same_as<NumericValue> auto&... args) -> NumericValue {
-    auto visitor = []<typename... Ts>(const Ts&... t) -> NumericValue {
-      if constexpr ((... || std::is_same_v<NotNumeric, Ts>)) {
+  return [](const auto&... args)
+             -> CPP_ret(NumericValue)(
+                 requires(concepts::same_as<std::decay_t<decltype(args)>,
+                                            NumericValue>&&...)) {
+    auto visitor = [](const auto&... t) -> NumericValue {
+      if constexpr ((... ||
+                     std::is_same_v<NotNumeric, std::decay_t<decltype(t)>>)) {
         return NotNumeric{};
       } else {
         return (NumericOperation{}(t...));
@@ -167,9 +174,8 @@ class AvgExpression : public AvgExpressionBase {
 // IRI). This always returns a `bool`, see `ValueIdComparators.h` for details.
 template <valueIdComparators::Comparison Comp>
 inline const auto compareIdsOrStrings =
-    []<typename T, typename U>(
-        const T& a, const U& b,
-        const EvaluationContext* ctx) -> IdOrLiteralOrIri {
+    [](const auto& a, const auto& b,
+       const EvaluationContext* ctx) -> IdOrLiteralOrIri {
   // TODO<joka921> moveTheStrings.
   return toBoolNotUndef(
              sparqlExpression::compareIdsOrStrings<
@@ -181,19 +187,19 @@ inline const auto compareIdsOrStrings =
 
 // Aggregate expression for MIN and MAX.
 template <valueIdComparators::Comparison comparison>
-inline const auto minMaxLambdaForAllTypes =
-    []<SingleExpressionResult T>(const T& a, const T& b,
-                                 const EvaluationContext* ctx) {
-      auto actualImpl = [ctx](const auto& x, const auto& y) {
-        return compareIdsOrStrings<comparison>(x, y, ctx);
-      };
-      if constexpr (ad_utility::isSimilar<T, Id>) {
-        return std::get<Id>(actualImpl(a, b));
-      } else {
-        // TODO<joka921> We should definitely move strings here.
-        return std::visit(actualImpl, a, b);
-      }
-    };
+inline const auto minMaxLambdaForAllTypes = CPP_template_lambda()(typename T)(
+    const T& a, const T& b,
+    const EvaluationContext* ctx)(requires SingleExpressionResult<T>) {
+  auto actualImpl = [ctx](const auto& x, const auto& y) {
+    return compareIdsOrStrings<comparison>(x, y, ctx);
+  };
+  if constexpr (ad_utility::isSimilar<T, Id>) {
+    return std::get<Id>(actualImpl(a, b));
+  } else {
+    // TODO<joka921> We should definitely move strings here.
+    return std::visit(actualImpl, a, b);
+  }
+};
 constexpr inline auto minLambdaForAllTypes =
     minMaxLambdaForAllTypes<valueIdComparators::Comparison::LT>;
 constexpr inline auto maxLambdaForAllTypes =
@@ -219,3 +225,5 @@ using detail::MaxExpression;
 using detail::MinExpression;
 using detail::SumExpression;
 }  // namespace sparqlExpression
+
+#endif  // QLEVER_SRC_ENGINE_SPARQLEXPRESSIONS_AGGREGATEEXPRESSION_H

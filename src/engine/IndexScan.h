@@ -1,11 +1,13 @@
 // Copyright 2015, University of Freiburg,
 // Chair of Algorithms and Data Structures.
 // Author: Björn Buchhold (buchhold@informatik.uni-freiburg.de)
-#pragma once
+
+#ifndef QLEVER_SRC_ENGINE_INDEXSCAN_H
+#define QLEVER_SRC_ENGINE_INDEXSCAN_H
 
 #include <string>
 
-#include "./Operation.h"
+#include "engine/Operation.h"
 #include "util/HashMap.h"
 
 class SparqlTriple;
@@ -97,7 +99,7 @@ class IndexScan final : public Operation {
   // join between the first column of the result with the `joinColumn`.
   // Requires that the `joinColumn` is sorted, else the behavior is undefined.
   Permutation::IdTableGenerator lazyScanForJoinOfColumnWithScan(
-      std::span<const Id> joinColumn) const;
+      ql::span<const Id> joinColumn) const;
 
   // Return two generators, the first of which yields exactly the elements of
   // `input` and the second of which yields the matching blocks, skipping the
@@ -176,7 +178,9 @@ class IndexScan final : public Operation {
       const CompressedRelationReader::LazyScanMetadata& metadata);
 
  private:
-  ProtoResult computeResult(bool requestLaziness) override;
+  std::unique_ptr<Operation> cloneImpl() const override;
+
+  Result computeResult(bool requestLaziness) override;
 
   vector<QueryExecutionTree*> getChildren() override { return {}; }
 
@@ -215,7 +219,7 @@ class IndexScan final : public Operation {
 
   // Retrieve all the relevant `CompressedBlockMetadata` for this scan without
   // applying any additional pre-filter procedure.
-  std::optional<std::span<const CompressedBlockMetadata>> getBlockMetadata()
+  std::optional<ql::span<const CompressedBlockMetadata>> getBlockMetadata()
       const;
 
   // This method retrieves all relevant `CompressedBlockMetadata` and performs
@@ -226,7 +230,7 @@ class IndexScan final : public Operation {
   // Apply the `prefilter_` to the `blocks`. May only be called if the limit is
   // unconstrained, and a `prefilter_` exists.
   std::vector<CompressedBlockMetadata> applyPrefilter(
-      std::span<const CompressedBlockMetadata> blocks) const;
+      ql::span<const CompressedBlockMetadata> blocks) const;
 
   // Helper functions for the public `getLazyScanFor...` methods and
   // `chunkedIndexScan` (see above).
@@ -234,3 +238,5 @@ class IndexScan final : public Operation {
       std::vector<CompressedBlockMetadata> blocks) const;
   std::optional<Permutation::MetadataAndBlocks> getMetadataForScan() const;
 };
+
+#endif  // QLEVER_SRC_ENGINE_INDEXSCAN_H

@@ -1,8 +1,11 @@
 // Copyright 2021, University of Freiburg,
 // Chair of Algorithms and Data Structures.
 // Author: Johannes Kalmbach<joka921> (johannes.kalmbach@gmail.com)
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
-#pragma once
+#ifndef QLEVER_SRC_UTIL_PARAMETERS_H
+#define QLEVER_SRC_UTIL_PARAMETERS_H
 
 #include <atomic>
 #include <concepts>
@@ -36,12 +39,12 @@ struct ParameterBase {
 
 // Concepts for the template types of `Parameter`.
 template <typename FunctionType, typename ToType>
-concept ParameterFromStringType =
+CPP_concept ParameterFromStringType =
     std::default_initializable<FunctionType> &&
     InvocableWithSimilarReturnType<FunctionType, ToType, const std::string&>;
 
 template <typename FunctionType, typename FromType>
-concept ParameterToStringType =
+CPP_concept ParameterToStringType =
     std::default_initializable<FunctionType> &&
     InvocableWithSimilarReturnType<FunctionType, std::string, FromType>;
 
@@ -54,9 +57,12 @@ concept ParameterToStringType =
 ///         a std::string representation.
 /// \tparam Name The Name of the parameter (there are typically a lot of
 ///         parameters with the same `Type`).
-template <std::semiregular Type, ParameterFromStringType<Type> FromString,
-          ParameterToStringType<Type> ToString, ParameterName Name>
-struct Parameter : public ParameterBase {
+CPP_template(typename Type, typename FromString, typename ToString,
+             ParameterName Name)(
+    requires std::semiregular<Type> CPP_and
+        ParameterFromStringType<FromString, Type>
+            CPP_and ParameterToStringType<ToString, Type>) struct Parameter
+    : public ParameterBase {
   constexpr static ParameterName name = Name;
 
  private:
@@ -132,14 +138,14 @@ namespace detail::parameterConceptImpl {
 template <typename T>
 struct ParameterConceptImpl : std::false_type {};
 
-template <std::semiregular Type, ParameterFromStringType<Type> FromString,
-          ParameterToStringType<Type> ToString, ParameterName Name>
+template <typename Type, typename FromString, typename ToString,
+          ParameterName Name>
 struct ParameterConceptImpl<Parameter<Type, FromString, ToString, Name>>
     : std::true_type {};
 }  // namespace detail::parameterConceptImpl
 
 template <typename T>
-concept IsParameter =
+CPP_concept IsParameter =
     detail::parameterConceptImpl::ParameterConceptImpl<T>::value;
 
 namespace detail::parameterShortNames {
@@ -147,16 +153,26 @@ namespace detail::parameterShortNames {
 // TODO<joka921> Replace these by versions that actually parse the whole
 // string.
 struct fl {
-  float operator()(const auto& s) const { return std::stof(s); }
+  template <typename T>
+  float operator()(const T& s) const {
+    return std::stof(s);
+  }
 };
 struct dbl {
-  double operator()(const auto& s) const { return std::stod(s); }
+  template <typename T>
+  double operator()(const T& s) const {
+    return std::stod(s);
+  }
 };
 struct szt {
-  size_t operator()(const auto& s) const { return std::stoull(s); }
+  template <typename T>
+  size_t operator()(const T& s) const {
+    return std::stoull(s);
+  }
 };
 struct bl {
-  bool operator()(const auto& s) const {
+  template <typename T>
+  bool operator()(const T& s) const {
     if (s == "true") return true;
     if (s == "false") return false;
     AD_THROW(
@@ -165,7 +181,10 @@ struct bl {
 };
 
 struct toString {
-  std::string operator()(const auto& s) const { return std::to_string(s); }
+  template <typename T>
+  std::string operator()(const T& s) const {
+    return std::to_string(s);
+  }
 };
 struct boolToString {
   std::string operator()(const bool& v) const { return v ? "true" : "false"; }
@@ -232,8 +251,12 @@ using DurationParameter = Parameter<ad_utility::ParseableDuration<DurationType>,
 /// "increase the cache size by 20%") nor an atomic update of multiple
 /// parameters at the same time. If needed, this functionality could be added
 /// to the current implementation.
-template <IsParameter... ParameterTypes>
+template <QL_CONCEPT_OR_TYPENAME(IsParameter)... ParameterTypes>
 class Parameters {
+  // In C++17 mode we cannot use SFINAE, but we also currently don't need it,
+  // add a static_assert for safety should this ever change.
+  static_assert((... && IsParameter<ParameterTypes>));
+
  private:
   using Tuple = std::tuple<ad_utility::Synchronized<ParameterTypes>...>;
   Tuple _parameters;
@@ -293,9 +316,9 @@ class Parameters {
 
   // For the parameter with name `Name` specify the function that is to be
   // called, when this parameter value changes.
-  template <ParameterName name, typename OnUpdateAction>
+  template <ParameterName Name, typename OnUpdateAction>
   auto setOnUpdateAction(OnUpdateAction onUpdateAction) {
-    constexpr auto index = _nameToIndex.at(name);
+    constexpr auto index = _nameToIndex.at(Name);
     std::get<index>(_parameters)
         .wlock()
         ->setOnUpdateAction(std::move(onUpdateAction));
@@ -328,7 +351,8 @@ class Parameters {
   [[nodiscard]] ad_utility::HashMap<std::string, std::string> toMap() const {
     ad_utility::HashMap<std::string, std::string> result;
 
-    auto insert = [&]<typename T>(const T& synchronizedParameter) {
+    auto insert = [&](const auto& synchronizedParameter) {
+      using T = std::decay_t<decltype(synchronizedParameter)>;
       std::string name{T::value_type::name};
       result[std::move(name)] = synchronizedParameter.rlock()->toString();
     };
@@ -341,7 +365,8 @@ class Parameters {
     static ad_utility::HashSet<std::string> value = [this]() {
       ad_utility::HashSet<std::string> result;
 
-      auto insert = [&result]<typename T>(const T&) {
+      auto insert = [&result](const auto& t) {
+        using T = std::decay_t<decltype(t)>;
         result.insert(std::string{T::value_type::name});
       };
       ad_utility::forEachInTuple(_parameters, insert);
@@ -351,3 +376,5 @@ class Parameters {
   }
 };
 }  // namespace ad_utility
+
+#endif  // QLEVER_SRC_UTIL_PARAMETERS_H

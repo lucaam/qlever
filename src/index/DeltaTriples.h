@@ -4,7 +4,8 @@
 //          Julian Mundhahs <mundhahj@tf.uni-freiburg.de>
 //          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
 
-#pragma once
+#ifndef QLEVER_SRC_INDEX_DELTATRIPLES_H
+#define QLEVER_SRC_INDEX_DELTATRIPLES_H
 
 #include "engine/LocalVocab.h"
 #include "global/IdTriple.h"
@@ -25,7 +26,10 @@ using LocatedTriplesPerBlockAllPermutations =
 // that correctly respects these delta triples, hence the name.
 struct LocatedTriplesSnapshot {
   LocatedTriplesPerBlockAllPermutations locatedTriplesPerBlock_;
-  LocalVocab localVocab_;
+  // Make sure to keep the local vocab alive as long as the snapshot is alive.
+  // The `DeltaTriples` class may concurrently add new entries under the hood,
+  // but this is safe because the `LifetimeExtender` prevents access entirely.
+  LocalVocab::LifetimeExtender localVocabLifetimeExtender_;
   // A unique index for this snapshot that is used in the query cache.
   size_t index_;
   // Get `TripleWithPosition` objects for given permutation.
@@ -40,8 +44,8 @@ class SharedLocatedTriplesSnapshot
 
 // A class for keeping track of the number of triples of the `DeltaTriples`.
 struct DeltaTriplesCount {
-  size_t triplesInserted_;
-  size_t triplesDeleted_;
+  int64_t triplesInserted_;
+  int64_t triplesDeleted_;
 
   /// Output as json. The signature of this function is mandated by the json
   /// library to allow for implicit conversion.
@@ -72,6 +76,7 @@ class DeltaTriples {
   FRIEND_TEST(DeltaTriplesTest, insertTriplesAndDeleteTriples);
   FRIEND_TEST(DeltaTriplesTest, clear);
   FRIEND_TEST(DeltaTriplesTest, addTriplesToLocalVocab);
+  FRIEND_TEST(DeltaTriplesTest, storeAndRestoreData);
 
  public:
   using Triples = std::vector<IdTriple<0>>;
@@ -88,6 +93,9 @@ class DeltaTriples {
   // The local vocabulary of the delta triples (they may have components,
   // which are not contained in the vocabulary of the original index).
   LocalVocab localVocab_;
+
+  // See the documentation of `setPersist()` below.
+  std::optional<std::string> filenameForPersisting_;
 
   // Assert that the Permutation Enum values have the expected int values.
   // This is used to store and lookup items that exist for permutation in an
@@ -121,7 +129,7 @@ class DeltaTriples {
  public:
   // Construct for given index.
   explicit DeltaTriples(const Index& index);
-  explicit DeltaTriples(const IndexImpl& index) : index_{index} {};
+  explicit DeltaTriples(const IndexImpl& index) : index_{index} {}
 
   // Disable accidental copying.
   DeltaTriples(const DeltaTriples&) = delete;
@@ -146,8 +154,12 @@ class DeltaTriples {
   void clear();
 
   // The number of delta triples added and subtracted.
-  size_t numInserted() const { return triplesInserted_.size(); }
-  size_t numDeleted() const { return triplesDeleted_.size(); }
+  int64_t numInserted() const {
+    return static_cast<int64_t>(triplesInserted_.size());
+  }
+  int64_t numDeleted() const {
+    return static_cast<int64_t>(triplesDeleted_.size());
+  }
   DeltaTriplesCount getCounts() const;
 
   // Insert triples.
@@ -155,6 +167,17 @@ class DeltaTriples {
 
   // Delete triples.
   void deleteTriples(CancellationHandle cancellationHandle, Triples triples);
+
+  // If the `filename` is set, then `writeToDisk()` will write these
+  // `DeltaTriples` to `filename.value()`. If `filename` is `nullopt`, then
+  // `writeToDisk` will be a nullop.
+  void setPersists(std::optional<std::string> filename);
+
+  // Write the delta triples to disk to persist them between restarts.
+  void writeToDisk() const;
+
+  // Read the delta triples from disk to restore them after a restart.
+  void readFromDisk();
 
   // Return a deep copy of the `LocatedTriples` and the corresponding
   // `LocalVocab` which form a snapshot of the current status of this
@@ -175,7 +198,7 @@ class DeltaTriples {
   // maps later).
   std::vector<LocatedTripleHandles> locateAndAddTriples(
       CancellationHandle cancellationHandle,
-      std::span<const IdTriple<0>> idTriples, bool shouldExist);
+      ql::span<const IdTriple<0>> idTriples, bool shouldExist);
 
   // Common implementation for `insertTriples` and `deleteTriples`.
   // `shouldExist` specifies the action: insert or delete. `targetMap` contains
@@ -204,6 +227,8 @@ class DeltaTriples {
   // delete the respective entry in `triplesInserted_` or `triplesDeleted_`,
   // which stores these iterators.
   void eraseTripleInAllPermutations(LocatedTripleHandles& handles);
+
+  friend class DeltaTriplesManager;
 };
 
 // This class synchronizes the access to a `DeltaTriples` object, thus avoiding
@@ -226,7 +251,10 @@ class DeltaTriplesManager {
   // snapshot before or after a modification, but never one of an ongoing
   // modification.
   template <typename ReturnType>
-  ReturnType modify(const std::function<ReturnType(DeltaTriples&)>& function);
+  ReturnType modify(const std::function<ReturnType(DeltaTriples&)>& function,
+                    bool writeToDiskAfterRequest = true);
+
+  void setFilenameForPersistentUpdatesAndReadFromDisk(std::string filename);
 
   // Reset the updates represented by the underlying `DeltaTriples` and then
   // update the current snapshot.
@@ -236,3 +264,5 @@ class DeltaTriplesManager {
   // be safely used to execute a query without interfering with future updates.
   SharedLocatedTriplesSnapshot getCurrentSnapshot() const;
 };
+
+#endif  // QLEVER_SRC_INDEX_DELTATRIPLES_H

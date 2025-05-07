@@ -294,10 +294,10 @@ VariableToColumnMap PathSearch::computeVariableToColumnMap() const {
 };
 
 // _____________________________________________________________________________
-std::pair<std::span<const Id>, std::span<const Id>>
+std::pair<ql::span<const Id>, ql::span<const Id>>
 PathSearch::handleSearchSides() const {
-  std::span<const Id> sourceIds;
-  std::span<const Id> targetIds;
+  ql::span<const Id> sourceIds;
+  ql::span<const Id> targetIds;
 
   if (sourceAndTargetTree_.has_value()) {
     auto resultTable = sourceAndTargetTree_.value()->getResult();
@@ -387,7 +387,7 @@ PathsLimited PathSearch::findPaths(
 
 // _____________________________________________________________________________
 PathsLimited PathSearch::allPaths(
-    std::span<const Id> sources, std::span<const Id> targets,
+    ql::span<const Id> sources, ql::span<const Id> targets,
     const BinSearchWrapper& binSearch, bool cartesian,
     std::optional<uint64_t> numPathsPerTarget) const {
   PathsLimited paths{allocator()};
@@ -470,4 +470,19 @@ void PathSearch::pathsToResultTable(IdTable& tableDyn, PathsLimited& paths,
   }
 
   tableDyn = std::move(table).toDynamic();
+}
+
+// _____________________________________________________________________________
+std::unique_ptr<Operation> PathSearch::cloneImpl() const {
+  auto copy = std::make_unique<PathSearch>(*this);
+  copy->subtree_ = subtree_->clone();
+  auto cloneIfNonEmpty = [](auto& tree) {
+    if (tree.has_value()) {
+      tree = tree.value()->clone();
+    }
+  };
+  cloneIfNonEmpty(copy->sourceTree_);
+  cloneIfNonEmpty(copy->targetTree_);
+  cloneIfNonEmpty(copy->sourceAndTargetTree_);
+  return copy;
 }

@@ -22,6 +22,14 @@
 
 namespace ad_utility {
 
+namespace compressedExternalIdTable::detail {
+template <typename B, typename R>
+CPP_requires(HasPushBackRequires, requires(B& b, const R& r)(b.push_back(r)));
+
+template <typename B, typename R>
+CPP_concept HasPushBack = CPP_requires_ref(HasPushBackRequires, B, R);
+}  // namespace compressedExternalIdTable::detail
+
 using namespace ad_utility::memory_literals;
 
 // The default size for compressed blocks in the following classes.
@@ -123,7 +131,7 @@ class CompressedExternalIdTableWriter {
             decltype(auto) column = table.getColumn(i);
             // TODO<C++23> Use `ql::views::chunkd`
             for (size_t lower = 0; lower < column.size(); lower += blockSize) {
-              size_t upper = std::min(lower + blockSize, column.size());
+              size_t upper = std::min<size_t>(lower + blockSize, column.size());
               auto thisBlockSizeUncompressed = (upper - lower) * sizeof(Id);
               auto compressed = ZstdWrapper::compress(
                   column.data() + lower, thisBlockSizeUncompressed);
@@ -214,9 +222,9 @@ class CompressedExternalIdTableWriter {
   }
 
   // The actual implementation of `makeGeneratorForIdTable` above.
-  template <size_t NumCols = 0>
+  template <size_t NumCols = 0, typename Cleanup>
   cppcoro::generator<const IdTableStatic<NumCols>> makeGeneratorForIdTableImpl(
-      size_t index, auto cleanup) {
+      size_t index, Cleanup cleanup) {
     using Table = IdTableStatic<NumCols>;
     auto firstBlock = startOfSingleIdTables_.at(index);
     auto lastBlock = index + 1 < startOfSingleIdTables_.size()
@@ -338,8 +346,9 @@ class CompressedExternalIdTableBase {
   }
   // Add a single row to the input. The type of `row` needs to be something that
   // can be `push_back`ed to a `IdTable`.
-  void push(const auto& row) requires requires { currentBlock_.push_back(row); }
-  {
+  CPP_template(typename R)(
+      requires compressedExternalIdTable::detail::HasPushBack<
+          decltype(currentBlock_), R>) void push(const R& row) {
     ++numElementsPushed_;
     currentBlock_.push_back(row);
     if (currentBlock_.size() >= blocksize_) {
@@ -456,11 +465,11 @@ class CompressedExternalIdTable
 
   // When we have a static number of columns, then the `numCols` argument to the
   // constructor is redundant.
-  explicit CompressedExternalIdTable(
+  CPP_member explicit CPP_ctor(CompressedExternalIdTable)(
       std::string filename, ad_utility::MemorySize memory,
       ad_utility::AllocatorWithLimit<Id> allocator,
-      MemorySize blocksizeCompression = DEFAULT_BLOCKSIZE_EXTERNAL_ID_TABLE)
-      requires(NumStaticCols > 0)
+      MemorySize blocksizeCompression = DEFAULT_BLOCKSIZE_EXTERNAL_ID_TABLE)(
+      requires(NumStaticCols > 0))
       : CompressedExternalIdTable(std::move(filename), NumStaticCols, memory,
                                   std::move(allocator), blocksizeCompression) {}
 
@@ -531,7 +540,8 @@ inline std::atomic<bool>
 template <typename Comparator>
 struct BlockSorter {
   [[no_unique_address]] Comparator comparator_{};
-  void operator()(auto& block) {
+  template <typename T>
+  void operator()(T& block) {
 #ifdef _PARALLEL_SORT
     ad_utility::parallel_sort(std::begin(block), std::end(block), comparator_);
 #else
@@ -583,11 +593,11 @@ class CompressedExternalIdTableSorter
 
   // When we have a static number of columns, then the `numCols` argument to the
   // constructor is redundant.
-  CompressedExternalIdTableSorter(
+  CPP_member CPP_ctor(CompressedExternalIdTableSorter)(
       std::string filename, ad_utility::MemorySize memory,
       ad_utility::AllocatorWithLimit<Id> allocator,
       MemorySize blocksizeCompression = DEFAULT_BLOCKSIZE_EXTERNAL_ID_TABLE,
-      Comparator comp = {}) requires(NumStaticCols > 0)
+      Comparator comp = {})(requires(NumStaticCols > 0))
       : CompressedExternalIdTableSorter(std::move(filename), NumStaticCols,
                                         memory, std::move(allocator),
                                         blocksizeCompression, comp) {}

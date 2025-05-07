@@ -26,8 +26,9 @@ class GroupConcatExpression : public SparqlExpression {
 
   // __________________________________________________________________________
   ExpressionResult evaluate(EvaluationContext* context) const override {
-    auto impl =
-        [this, context](SingleExpressionResult auto&& el) -> ExpressionResult {
+    auto impl = [this, context](auto&& el)
+        -> CPP_ret(ExpressionResult)(
+            requires SingleExpressionResult<decltype(el)>) {
       std::string result;
       auto groupConcatImpl = [this, &result, context](auto generator) {
         // TODO<joka921> Make this a configurable constant.
@@ -79,7 +80,7 @@ class GroupConcatExpression : public SparqlExpression {
 
  private:
   // _________________________________________________________________________
-  std::span<SparqlExpression::Ptr> childrenImpl() override {
+  ql::span<SparqlExpression::Ptr> childrenImpl() override {
     return {&child_, 1};
   }
 };

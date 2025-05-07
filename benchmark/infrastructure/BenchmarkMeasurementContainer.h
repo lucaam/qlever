@@ -94,8 +94,8 @@ class ResultEntry : public BenchmarkMetadataGetter {
   @param functionToMeasure The function, who's execution time will be
   measured and saved.
   */
-  ResultEntry(const std::string& descriptor,
-              const std::invocable auto& functionToMeasure)
+  template <std::invocable F>
+  ResultEntry(const std::string& descriptor, const F& functionToMeasure)
       : descriptor_{descriptor},
         measuredTime_{measureTimeOfFunction(functionToMeasure, descriptor)} {}
 
@@ -110,8 +110,9 @@ class ResultEntry : public BenchmarkMetadataGetter {
   @param functionToMeasure The function, who's execution time will be
   measured and saved.
   */
+  template <std::invocable F>
   ResultEntry(const std::string& descriptor, std::string_view descriptorForLog,
-              const std::invocable auto& functionToMeasure)
+              const F& functionToMeasure)
       : descriptor_{descriptor},
         measuredTime_{
             measureTimeOfFunction(functionToMeasure, descriptorForLog)} {}
@@ -227,8 +228,8 @@ class ResultTable : public BenchmarkMetadataGetter {
 
   @param row, column Which table entry to read. Starts with `(0,0)`.
   */
-  template <ad_utility::SameAsAnyTypeIn<EntryType> T>
-  T getEntry(const size_t row, const size_t column) const {
+  CPP_template(typename T)(requires ad_utility::SameAsAnyTypeIn<T, EntryType>) T
+      getEntry(const size_t row, const size_t column) const {
     AD_CONTRACT_CHECK(row < numRows() && column < numColumns());
     static_assert(!ad_utility::isSimilar<T, std::monostate>);
 

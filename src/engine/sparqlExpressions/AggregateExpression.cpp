@@ -2,6 +2,8 @@
 //                 Chair of Algorithms and Data Structures
 // Authors: Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
 //          Hannah Bast <bast@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "engine/sparqlExpressions/AggregateExpression.h"
 
@@ -15,11 +17,12 @@ namespace sparqlExpression::detail {
 // function.
 template <typename AggregateOperation, typename FinalOperation>
 struct EvaluateOnChildOperand {
-  ExpressionResult operator()(const AggregateOperation& aggregateOperation,
-                              ValueId resultForEmptyGroup,
-                              const FinalOperation& finalOperation,
-                              EvaluationContext* context, bool distinct,
-                              SingleExpressionResult auto&& operand) const {
+  template <typename O>
+  auto operator()(const AggregateOperation& aggregateOperation,
+                  ValueId resultForEmptyGroup,
+                  const FinalOperation& finalOperation,
+                  EvaluationContext* context, bool distinct, O&& operand) const
+      -> CPP_ret(ExpressionResult)(requires SingleExpressionResult<O>) {
     // Perform the more efficient calculation on `SetOfInterval`s if it is
     // possible.
     //
@@ -55,9 +58,9 @@ struct EvaluateOnChildOperand {
     // Helper lambda for aggregating two values.
     auto aggregateTwoValues = [&aggregateOperation, context](
                                   auto&& x, auto&& y) -> decltype(auto) {
-      if constexpr (requires {
-                      aggregateOperation._function(AD_FWD(x), AD_FWD(y));
-                    }) {
+      if constexpr (ranges::invocable<decltype(aggregateOperation._function),
+                                      decltype(AD_FWD(x)),
+                                      decltype(AD_FWD(y))>) {
         return aggregateOperation._function(AD_FWD(x), AD_FWD(y));
       } else {
         return aggregateOperation._function(AD_FWD(x), AD_FWD(y), context);
@@ -117,7 +120,7 @@ struct EvaluateOnChildOperand {
     //
     // TODO<joka921> Check if this is really necessary, or if we can also use
     // IDs in the intermediate steps without loss of efficiency.
-    if constexpr (requires { makeNumericId(result); }) {
+    if constexpr (ValueAsNumericId<decltype(result)>) {
       return makeNumericId(result);
     } else {
       return result;
@@ -153,7 +156,7 @@ AggregateExpression<AggregateOperation, FinalOperation>::evaluate(
 
 // _________________________________________________________________________
 template <typename AggregateOperation, typename FinalOperation>
-std::span<SparqlExpression::Ptr>
+ql::span<SparqlExpression::Ptr>
 AggregateExpression<AggregateOperation, FinalOperation>::childrenImpl() {
   return {&_child, 1};
 }

@@ -4,7 +4,8 @@
 
 // Common classes / Typedefs that are used during Index Creation
 
-#pragma once
+#ifndef QLEVER_SRC_INDEX_INDEXBUILDERTYPES_H
+#define QLEVER_SRC_INDEX_INDEXBUILDERTYPES_H
 
 #include <memory_resource>
 
@@ -228,11 +229,11 @@ struct LangtagAndTriple {
  * ranges for the individual HashMaps
  * @return A Tuple of lambda functions (see above)
  */
-template <size_t NumThreads>
+template <size_t NumThreads, typename IndexPtr>
 auto getIdMapLambdas(
     std::array<std::optional<ItemMapManager>, NumThreads>* itemArrayPtr,
     size_t maxNumberOfTriples, const TripleComponentComparator* comp,
-    auto* indexPtr, ItemAlloc alloc) {
+    IndexPtr* indexPtr, ItemAlloc alloc) {
   // that way the different ids won't interfere
   auto& itemArray = *itemArrayPtr;
   for (size_t j = 0; j < NumThreads; ++j) {
@@ -262,7 +263,8 @@ auto getIdMapLambdas(
    * - All Ids are assigned according to itemArray[idx]
    */
   const auto itemMapLamdaCreator = [&itemArray, indexPtr](const size_t idx) {
-    return [&map = *itemArray[idx], indexPtr](ad_utility::Rvalue auto&& tr) {
+    return [&map = *itemArray[idx],
+            indexPtr](QL_CONCEPT_OR_NOTHING(ad_utility::Rvalue) auto&& tr) {
       auto lt = indexPtr->tripleToInternalRepresentation(AD_FWD(tr));
       OptionalIds res;
       // get Ids for the actual triple and store them in the result.
@@ -310,3 +312,5 @@ auto getIdMapLambdas(
       ad_tuple_helpers::setupTupleFromCallable<NumThreads>(itemMapLamdaCreator);
   return itemMapLambdaTuple;
 }
+
+#endif  // QLEVER_SRC_INDEX_INDEXBUILDERTYPES_H

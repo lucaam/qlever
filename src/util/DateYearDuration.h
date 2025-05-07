@@ -52,12 +52,12 @@ class DateYearOrDuration {
 
   // Construct from a `Date`.
   explicit DateYearOrDuration(Date d) {
-    bits_ = std::bit_cast<uint64_t>(d) | (datetime << numPayloadDateBits);
+    bits_ = absl::bit_cast<uint64_t>(d) | (datetime << numPayloadDateBits);
   }
 
   // Construct a `DateYearOrDuration` given a `DayTimeDuration` object.
   explicit DateYearOrDuration(DayTimeDuration dayTimeDuration) {
-    bits_ = std::bit_cast<uint64_t>(dayTimeDuration) |
+    bits_ = absl::bit_cast<uint64_t>(dayTimeDuration) |
             (daytimeDuration << numPayloadDurationBits);
   }
 
@@ -86,7 +86,7 @@ class DateYearOrDuration {
 
   // Return the underlying `Date` object. The behavior is undefined if
   // `isDate()` is `false`.
-  Date getDateUnchecked() const { return std::bit_cast<Date>(bits_); }
+  Date getDateUnchecked() const { return absl::bit_cast<Date>(bits_); }
 
   // Return the underlying `Date` object. An assertion fails if `isDate()` is
   // `false`.
@@ -98,7 +98,7 @@ class DateYearOrDuration {
   // Return the underlying `DayTimeDuration` object. The behavior is undefined
   // if `isDayTimeDuration()` is `false`.
   DayTimeDuration getDayTimeDurationUnchecked() const {
-    return std::bit_cast<DayTimeDuration>(bits_);
+    return absl::bit_cast<DayTimeDuration>(bits_);
   }
 
   // Return the underlying `DayTimeDuration` object, with assertion check.
@@ -154,25 +154,52 @@ class DateYearOrDuration {
   // 2. If the year is outside the range [-9999, 9999], then the date must be
   // January 1, 00:00 hours.
 
-  // Parse from xsd:dateTime (e.g. 1900-12-13T03:12:00.33Z)
+  // Parse from `xsd:dateTime` (e.g. `1900-12-13T03:12:00.33Z`)
   static DateYearOrDuration parseXsdDatetime(std::string_view dateString);
+  // Parse from `xsd:dateTime` (e.g. `1900-12-13T03:12:00.33Z`). Returns a
+  // `DateYearOrDuration` value under the condition that `dateString` adheres to
+  // the correct datetime string format (is parsable). If the parsing procedure
+  // fails `std::nullopt` is returned.
+  static std::optional<DateYearOrDuration> parseXsdDatetimeGetOptDate(
+      std::string_view dateString);
 
-  // Parse from xsd:date (e.g. 1900-12-13)
+  // Parse from `xsd:date` (e.g. `1900-12-13`)
   static DateYearOrDuration parseXsdDate(std::string_view dateString);
+  // Parse from `xsd:date` (e.g. `1900-12-13`). Returns a `DateYearOrDuration`
+  // value under the condition that `dateString` adheres to the correct date
+  // string format (is parsable). If the parsing procedure fails `std::nullopt`
+  // is returned.
+  static std::optional<DateYearOrDuration> parseXsdDateGetOptDate(
+      std::string_view dateString);
 
-  // Parse from xsd:gYearMonth (e.g. 1900-03)
+  // Parse from `xsd:gYearMonth` (e.g. `1900-03`)
   static DateYearOrDuration parseGYearMonth(std::string_view dateString);
 
-  // Parse from xsd:gYear (e.g. 1900)
+  // Parse from `xsd:gYear` (e.g. `1900`)
   static DateYearOrDuration parseGYear(std::string_view dateString);
 
-  // Parse from xsd:dayTimeDuration (e.g. P2DT3H59M59.99S)
+  // Parse from `xsd:dayTimeDuration` (e.g. `P2DT3H59M59.99S`)
   static DateYearOrDuration parseXsdDayTimeDuration(
       std::string_view dayTimeDurationString);
 
   // Parse `xsd:dayTimeDuration` from a `DateYearOrDuration`.
   static std::optional<DateYearOrDuration> xsdDayTimeDurationFromDate(
       const DateYearOrDuration& dateOrLargeYear);
+
+  // If the provided `DateYearOrDuration` holds an actual `Date` value,
+  // transform it to `xsd:dateTime` by filling the missing date-components with
+  // `0`. If `DateYearOrDuration` holds a `xsd:dayTimeDuration` or `LargeYear`
+  // related value, return std::nullopt.
+  static std::optional<DateYearOrDuration> convertToXsdDatetime(
+      const DateYearOrDuration& dateValue);
+
+  // If the provided `DateYearOrDuration` holds an actual `Date` value,
+  // transform it to `xsd:dateTime` by filling the missing date-components with
+  // `0` or dropping the additional date-components. If `DateYearOrDuration`
+  // holds a `xsd:dayTimeDuration` or `LargeYear` related value, return
+  // std::nullopt.
+  static std::optional<DateYearOrDuration> convertToXsdDate(
+      const DateYearOrDuration& dateValue);
 };
 
 #endif  //  QLEVER_DATES_AND_DURATION_H

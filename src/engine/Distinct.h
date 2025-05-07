@@ -1,7 +1,9 @@
 // Copyright 2015, University of Freiburg,
 // Chair of Algorithms and Data Structures.
 // Author: Björn Buchhold (buchhold@informatik.uni-freiburg.de)
-#pragma once
+
+#ifndef QLEVER_SRC_ENGINE_DISTINCT_H
+#define QLEVER_SRC_ENGINE_DISTINCT_H
 
 #include <vector>
 
@@ -28,6 +30,11 @@ class Distinct : public Operation {
     return subtree_->resultSortedOn();
   }
 
+  // Get all columns that need to be distinct.
+  const std::vector<ColumnIndex>& getDistinctColumns() const {
+    return keepIndices_;
+  }
+
  private:
   uint64_t getSizeEstimateBeforeLimit() override {
     return subtree_->getSizeEstimate();
@@ -52,12 +59,14 @@ class Distinct : public Operation {
   [[nodiscard]] string getCacheKeyImpl() const override;
 
  private:
-  ProtoResult computeResult(bool requestLaziness) override;
+  std::unique_ptr<Operation> cloneImpl() const override;
+  Result computeResult(bool requestLaziness) override;
 
   VariableToColumnMap computeVariableToColumnMap() const override;
 
   // Helper function that only compares rows on the columns in `keepIndices_`.
-  bool matchesRow(const auto& a, const auto& b) const;
+  template <typename T1, typename T2>
+  bool matchesRow(const T1& a, const T2& b) const;
 
   // Return a generator that applies an in-place unique algorithm to the
   // `IdTables`s yielded by the input generator. The `yieldOnce` flag controls
@@ -87,3 +96,5 @@ class Distinct : public Operation {
   FRIEND_TEST(Distinct, distinctWithEmptyInput);
   FRIEND_TEST(Distinct, testChunkEdgeCases);
 };
+
+#endif  // QLEVER_SRC_ENGINE_DISTINCT_H

@@ -1,12 +1,15 @@
 // Copyright 2023, University of Freiburg,
 // Chair of Algorithms and Data Structures.
 // Author: Andre Schlegel (March of 2023, schlegea@informatik.uni-freiburg.de)
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "util/ConfigManager/ConfigManager.h"
 
 #include <ANTLRInputStream.h>
 #include <CommonTokenStream.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_replace.h>
 #include <antlr4-runtime.h>
 
 #include <functional>
@@ -45,8 +48,10 @@ ConfigManager::HashMapEntry::HashMapEntry(Data&& data)
     : data_{std::make_unique<Data>(std::move(data))} {}
 
 // ____________________________________________________________________________
-template <SameAsAnyTypeIn<ConfigManager::HashMapEntry::Data> T>
-bool ConfigManager::HashMapEntry::implHolds() const {
+CPP_template_def(typename T)(
+    requires SameAsAnyTypeIn<
+        T, ConfigManager::HashMapEntry::Data>) bool ConfigManager::
+    HashMapEntry::implHolds() const {
   // Make sure, that it is not a null pointer.
   AD_CORRECTNESS_CHECK(data_);
 
@@ -64,10 +69,13 @@ bool ConfigManager::HashMapEntry::holdsSubManager() const {
 }
 
 // ____________________________________________________________________________
-template <SimilarToAnyTypeIn<ConfigManager::HashMapEntry::Data> ReturnType>
-requires std::is_object_v<ReturnType> std::optional<ReturnType*>
-ConfigManager::HashMapEntry::getConfigOptionOrSubManager(
-    ad_utility::SimilarTo<ConfigManager::HashMapEntry> auto& instance) {
+CPP_template_def(typename ReturnType, typename InstanceType)(
+    requires SimilarToAnyTypeIn<ReturnType, ConfigManager::HashMapEntry::Data>
+        CPP_and_def std::is_object_v<ReturnType>
+            CPP_and_def ad_utility::SimilarTo<ConfigManager::HashMapEntry,
+                                              InstanceType>)
+    std::optional<ReturnType*> ConfigManager::HashMapEntry::
+        getConfigOptionOrSubManager(InstanceType& instance) {
   using DecayReturnType = std::decay_t<ReturnType>;
   /*
   We cheat a bit, by using `implHolds`, because so we can reduce the amount
@@ -104,32 +112,31 @@ std::optional<const ConfigManager*> ConfigManager::HashMapEntry::getSubManager()
 }
 
 // ____________________________________________________________________________
-template <typename Visitor>
-requires std::invocable<Visitor, ConfigOption&> &&
-         std::invocable<Visitor, ConfigManager&>
-decltype(auto) ConfigManager::HashMapEntry::visit(Visitor&& vis) {
+CPP_template_def(typename Visitor)(
+    requires std::invocable<Visitor, ConfigOption&> CPP_and_def
+        std::invocable<Visitor, ConfigManager&>) decltype(auto)
+    ConfigManager::HashMapEntry::visit(Visitor&& vis) {
   return visitImpl(AD_FWD(vis), data_);
 }
-template <typename Visitor>
-requires std::invocable<Visitor, const ConfigOption&> &&
-         std::invocable<Visitor, const ConfigManager&>
-decltype(auto) ConfigManager::HashMapEntry::visit(Visitor&& vis) const {
+CPP_template_def(typename Visitor)(
+    requires std::invocable<Visitor, ConfigOption&> CPP_and_def
+        std::invocable<Visitor, ConfigManager&>) decltype(auto)
+    ConfigManager::HashMapEntry::visit(Visitor&& vis) const {
   return visitImpl(AD_FWD(vis), data_);
 }
 
 // ____________________________________________________________________________
-template <
-    typename Visitor,
-    ad_utility::SimilarTo<std::unique_ptr<ConfigManager::HashMapEntry::Data>>
-        PointerType>
-requires std::invocable<
-             Visitor, std::conditional_t<std::is_const_v<PointerType>,
-                                         const ConfigOption&, ConfigOption&>> &&
-         std::invocable<
-             Visitor, std::conditional_t<std::is_const_v<PointerType>,
-                                         const ConfigManager&, ConfigManager&>>
-decltype(auto) ConfigManager::HashMapEntry::visitImpl(Visitor&& vis,
-                                                      PointerType& data) {
+CPP_template_def(typename Visitor, typename PointerType)(
+    requires ad_utility::SimilarTo<
+        std::unique_ptr<ConfigManager::HashMapEntry::Data>, PointerType>
+        CPP_and_def std::invocable<
+            Visitor, std::conditional_t<std::is_const_v<PointerType>,
+                                        const ConfigOption&, ConfigOption&>>
+            CPP_and_def std::invocable<
+                Visitor, std::conditional_t<std::is_const_v<PointerType>,
+                                            const ConfigManager&,
+                                            ConfigManager&>>) decltype(auto)
+    ConfigManager::HashMapEntry::visitImpl(Visitor&& vis, PointerType& data) {
   // Make sure, that it is not a null pointer.
   AD_CORRECTNESS_CHECK(data);
 
@@ -150,13 +157,14 @@ void ConfigManager::verifyHashMapEntry(std::string_view jsonPathToEntry,
 }
 
 // ____________________________________________________________________________
-template <typename Visitor>
-requires ad_utility::InvocableWithExactReturnType<
-             Visitor, void, std::string_view, ConfigManager&> &&
-         ad_utility::InvocableWithExactReturnType<
-             Visitor, void, std::string_view, ConfigOption&>
-void ConfigManager::visitHashMapEntries(Visitor&& vis, bool sortByCreationOrder,
-                                        std::string_view pathPrefix) const {
+CPP_template_def(typename Visitor)(
+    requires ad_utility::InvocableWithExactReturnType<
+        Visitor, void, std::string_view, ConfigManager&>
+        CPP_and_def ad_utility::InvocableWithExactReturnType<
+            Visitor, void, std::string_view,
+            ConfigOption&>) void ConfigManager::
+    visitHashMapEntries(Visitor&& vis, bool sortByCreationOrder,
+                        std::string_view pathPrefix) const {
   // For less code duplication.
   using Pair = decltype(configurationOptions_)::value_type;
 
@@ -188,17 +196,18 @@ void ConfigManager::visitHashMapEntries(Visitor&& vis, bool sortByCreationOrder,
 }
 
 // ____________________________________________________________________________
-template <
-    SimilarTo<ad_utility::HashMap<std::string, ConfigManager::HashMapEntry>>
+CPP_template_def(typename HashMapType, typename Callable)(
+    requires SimilarTo<
+        ad_utility::HashMap<std::string, ConfigManager::HashMapEntry>,
         HashMapType>
-requires std::is_object_v<HashMapType> auto ConfigManager::allHashMapEntries(
-    HashMapType& hashMap, std::string_view pathPrefix,
-    const ad_utility::InvocableWithSimilarReturnType<
-        bool, const HashMapEntry&> auto& predicate)
-    -> std::conditional_t<
-        std::is_const_v<HashMapType>,
-        const std::vector<std::pair<const std::string, const HashMapEntry&>>,
-        std::vector<std::pair<std::string, HashMapEntry&>>> {
+        CPP_and_def std::is_object_v<HashMapType>) auto ConfigManager::
+    allHashMapEntries(HashMapType& hashMap, std::string_view pathPrefix,
+                      const Callable& predicate)
+        -> std::conditional_t<
+            std::is_const_v<HashMapType>,
+            const std::vector<
+                std::pair<const std::string, const HashMapEntry&>>,
+            std::vector<std::pair<std::string, HashMapEntry&>>> {
   std::conditional_t<
       std::is_const_v<HashMapType>,
       std::vector<std::pair<const std::string, const HashMapEntry&>>,
@@ -255,12 +264,13 @@ requires std::is_object_v<HashMapType> auto ConfigManager::allHashMapEntries(
 }
 
 // ____________________________________________________________________________
-template <QL_CONCEPT_OR_TYPENAME(SameAsAny<ConfigOption&, const ConfigOption&>)
-              ReturnReference>
-std::vector<std::pair<std::string, ReturnReference>>
-ConfigManager::configurationOptionsImpl(
-    SimilarTo<ad_utility::HashMap<std::string, HashMapEntry>> auto&
-        configurationOptions) {
+CPP_template_def(typename ConfigOptions, typename ReturnReference)(
+    requires SameAsAny<ReturnReference, ConfigOption&, const ConfigOption&>
+        CPP_and_def SimilarTo<
+            ad_utility::HashMap<std::string, ConfigManager::HashMapEntry>,
+            ConfigOptions>)
+    std::vector<std::pair<std::string, ReturnReference>> ConfigManager::
+        configurationOptionsImpl(ConfigOptions& configurationOptions) {
   return ad_utility::transform(
       allHashMapEntries(
           configurationOptions, "",
@@ -274,13 +284,15 @@ ConfigManager::configurationOptionsImpl(
 // ____________________________________________________________________________
 std::vector<std::pair<std::string, ConfigOption&>>
 ConfigManager::configurationOptions() {
-  return configurationOptionsImpl<ConfigOption&>(configurationOptions_);
+  return configurationOptionsImpl<decltype(configurationOptions_),
+                                  ConfigOption&>(configurationOptions_);
 }
 
 // ____________________________________________________________________________
 std::vector<std::pair<std::string, const ConfigOption&>>
 ConfigManager::configurationOptions() const {
-  return configurationOptionsImpl<const ConfigOption&>(configurationOptions_);
+  return configurationOptionsImpl<const decltype(configurationOptions_),
+                                  const ConfigOption&>(configurationOptions_);
 }
 
 // ____________________________________________________________________________
@@ -588,8 +600,9 @@ nlohmann::ordered_json ConfigManager::generateConfigurationDocJson(
   nlohmann::ordered_json configurationDocJson;
 
   visitHashMapEntries(
-      [&configurationDocJson, &pathPrefix]<typename T>(std::string_view path,
-                                                       T& optionOrSubManager) {
+      [&configurationDocJson, &pathPrefix](std::string_view path,
+                                           auto& optionOrSubManager) {
+        using T = std::decay_t<decltype(optionOrSubManager)>;
         /*
         Pointer to the position of this option, or sub manager, in
         `configurationDocJson`.
@@ -670,8 +683,10 @@ std::string ConfigManager::generateConfigurationDocDetailedList(
 
   visitHashMapEntries(
       [&pathPrefix, &stringRepresentations, &assignment,
-       &generateValidatorListString]<typename T>(std::string_view path,
-                                                 T& optionOrSubManager) {
+       &generateValidatorListString](std::string_view path,
+                                     auto& optionOrSubManager) {
+        using T = std::decay_t<decltype(optionOrSubManager)>;
+
         // Getting rid of the first `/` for printing, based on user feedback.
         std::string_view adjustedPath = path.substr(1, path.length());
 
@@ -857,9 +872,10 @@ bool ConfigManager::containsOption(const ConfigOption& opt) const {
 }
 
 // ____________________________________________________________________________
-template <QL_CONCEPT_OR_TYPENAME(ConfigOptionOrManager) T>
-void ConfigManager::ConfigurationDocValidatorAssignment::addEntryUnderKey(
-    const T& key, const ConfigOptionValidatorManager& manager) {
+CPP_template_def(typename T)(
+    requires ConfigOptionOrManager<T>) void ConfigManager::
+    ConfigurationDocValidatorAssignment::addEntryUnderKey(
+        const T& key, const ConfigOptionValidatorManager& manager) {
   getHashMapBasedOnType<T>()[&key].push_back(&manager);
 }
 // Explicit instantiation for `ConfigOption` and `ConfigManager`.
@@ -871,9 +887,10 @@ template void ConfigManager::ConfigurationDocValidatorAssignment::
                                     const ConfigOptionValidatorManager&);
 
 // ____________________________________________________________________________
-template <QL_CONCEPT_OR_TYPENAME(ConfigOptionOrManager) T>
-auto ConfigManager::ConfigurationDocValidatorAssignment::getEntriesUnderKey(
-    const T& key) const -> ValueGetterReturnType {
+CPP_template_def(typename T)(
+    requires ConfigOptionOrManager<T>) auto ConfigManager::
+    ConfigurationDocValidatorAssignment::getEntriesUnderKey(const T& key) const
+    -> ValueGetterReturnType {
   // The concerned hash map.
   const MemoryAdressHashMap<T>& hashMap{getHashMapBasedOnType<T>()};
 

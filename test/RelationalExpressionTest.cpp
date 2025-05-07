@@ -1,6 +1,8 @@
 //  Copyright 2021, University of Freiburg,
 //                  Chair of Algorithms and Data Structures.
 //  Author: Johannes Kalmbach <kalmbacj@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include <limits>
 #include <string>
@@ -40,9 +42,10 @@ const auto NaN = std::numeric_limits<double>::quiet_NaN();
 
 // Create and return a `RelationalExpression` with the given Comparison and the
 // given operands `leftValue` and `rightValue`.
-template <Comparison comp>
-auto makeExpression(SingleExpressionResult auto leftValue,
-                    SingleExpressionResult auto rightValue) {
+CPP_template(Comparison comp, typename L, typename R)(
+    requires SingleExpressionResult<L> CPP_and
+        SingleExpressionResult<R>) auto makeExpression(L leftValue,
+                                                       R rightValue) {
   auto leftChild = std::make_unique<SingleUseExpression>(std::move(leftValue));
   auto rightChild =
       std::make_unique<SingleUseExpression>(std::move(rightValue));
@@ -51,8 +54,10 @@ auto makeExpression(SingleExpressionResult auto leftValue,
       {std::move(leftChild), std::move(rightChild)});
 }
 
-auto makeInExpression(SingleExpressionResult auto leftValue,
-                      SingleExpressionResult auto... rightValues) {
+CPP_template(typename L,
+             typename... R)(requires SingleExpressionResult<L> CPP_and(
+    SingleExpressionResult<R>&&...)) auto makeInExpression(L leftValue,
+                                                           R... rightValues) {
   auto leftChild = std::make_unique<SingleUseExpression>(std::move(leftValue));
   std::vector<SparqlExpression::Ptr> rightChildren;
   (..., (rightChildren.push_back(
@@ -87,7 +92,8 @@ VectorWithMemoryLimit<ValueId> makeValueIdVector(
 
 // Convert `t` into a `ValueId`. `T` must be `double`, `int64_t`, or a
 // `VectorWithMemoryLimit` of any of those types.
-auto liftToValueId = []<typename T>(const T& t) {
+auto liftToValueId = [](const auto& t) {
+  using T = std::decay_t<decltype(t)>;
   if constexpr (SingleExpressionResult<T>) {
     if constexpr (ad_utility::isInstantiation<T, VectorWithMemoryLimit>) {
       return t.clone();
@@ -440,8 +446,9 @@ void testLessThanGreaterThanEqualMultipleValuesHelper(
 // converted to a ValueID before the call. `rightValue` "" both values ""
 // Requires that both `leftValue` and `rightValue` are either numeric constants
 // or numeric vectors, and that at least one of them is a vector.
+template <typename T1, typename T2>
 void testLessThanGreaterThanEqualMultipleValues(
-    auto leftValue, auto rightValue,
+    T1 leftValue, T2 rightValue,
     source_location l = source_location::current()) {
   auto trace = generateLocationTrace(
       l, "testLessThanGreaterThanEqualMultipleValues was called here");
@@ -631,8 +638,9 @@ TEST(RelationalExpression, StringVectorAndStringVector) {
   // is actually supported.
 }
 
-void testInExpressionVector(auto leftValue, auto rightValue, auto& ctx,
-                            const auto& expected) {
+template <typename T1, typename T2, typename Ctx, typename E>
+void testInExpressionVector(T1 leftValue, T2 rightValue, Ctx& ctx,
+                            const E& expected) {
   auto expression =
       makeInExpression(liftToValueId(leftValue), liftToValueId(rightValue));
   auto check = [&]() {
@@ -656,8 +664,8 @@ void testInExpressionVector(auto leftValue, auto rightValue, auto& ctx,
 // Assert that the expression `leftValue Comparator rightValue`, when evaluated
 // on the `TestContext` (see above), yields the `expected` result.
 
-template <Comparison Comp>
-void testWithExplicitIdResult(auto leftValue, auto rightValue,
+template <Comparison Comp, typename T1, typename T2>
+void testWithExplicitIdResult(T1 leftValue, T2 rightValue,
                               std::vector<Id> expected,
                               source_location l = source_location::current()) {
   static TestContext ctx;
@@ -673,8 +681,8 @@ void testWithExplicitIdResult(auto leftValue, auto rightValue,
   }
 }
 
-template <Comparison Comp>
-void testWithExplicitResult(auto leftValue, auto rightValue,
+template <Comparison Comp, typename T1, typename T2>
+void testWithExplicitResult(T1 leftValue, T2 rightValue,
                             std::vector<bool> expectedAsBool,
                             source_location l = source_location::current()) {
   auto t = generateLocationTrace(l);
@@ -777,9 +785,9 @@ TEST(RelationalExpression, VariableAndVariable) {
 // yields the `expected` result. The type of `expected`, `SetOfIntervals`
 // indicates that the expression was evaluated using binary search on the sorted
 // table.
-template <Comparison Comp>
+template <Comparison Comp, typename T>
 void testSortedVariableAndConstant(
-    Variable leftValue, auto rightValue, ad_utility::SetOfIntervals expected,
+    Variable leftValue, T rightValue, ad_utility::SetOfIntervals expected,
     source_location l = source_location::current()) {
   auto trace = generateLocationTrace(
       l, "test between sorted variable and constant was called here");
@@ -909,9 +917,11 @@ TEST(RelationalExpression, FilterEstimates) {
   };
   // Implementation for testing the size estimates of different relational
   // expressions.
-  auto testImpl = [&]<typename T>(std::type_identity<T>, size_t expectedSize,
-                                  ad_utility::source_location l =
-                                      source_location::current()) {
+  auto testImpl = [&](auto ti, size_t expectedSize,
+                      ad_utility::source_location l =
+                          source_location::current()) {
+    using T = typename decltype(ti)::type;
+
     auto tr = generateLocationTrace(l);
 
     auto first = makeVar("?x");
